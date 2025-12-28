@@ -28,6 +28,7 @@ colored = "2.0"
 [dev-dependencies]
 pretty_assertions = "1.4"
 tempfile = "3.9"
+test-case = "3.3"
 
 [[bin]]
 name = "pgnq"

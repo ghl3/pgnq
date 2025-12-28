@@ -110,12 +110,12 @@ fn process_lichess_comment(comment: &str, options: &OutputOptions) -> String {
     let mut result = comment.to_string();
 
     if options.strip_clocks {
-        result = remove_command(&result, "%clk");
-        result = remove_command(&result, "%emt");
+        result = remove_command(&result, "clk");
+        result = remove_command(&result, "emt");
     }
 
     if options.strip_evals {
-        result = remove_command(&result, "%eval");
+        result = remove_command(&result, "eval");
     }
 
     result.trim().to_string()
@@ -126,29 +126,23 @@ fn remove_command(text: &str, cmd: &str) -> String {
     let pattern = format!("[%{}", cmd);
     let mut result = String::new();
     let mut chars = text.chars().peekable();
-    let mut skip_depth = 0;
 
     while let Some(c) = chars.next() {
         if c == '[' {
+            // Check if this is our command
             let rest: String = chars.clone().take(pattern.len() - 1).collect();
-            if format!("[{}", rest).starts_with(&pattern) {
-                skip_depth = 1;
+            let check = format!("[{}", rest);
+            if check.starts_with(&pattern) {
+                // Skip until closing ]
                 for c2 in chars.by_ref() {
-                    if c2 == '[' {
-                        skip_depth += 1;
-                    } else if c2 == ']' {
-                        skip_depth -= 1;
-                        if skip_depth == 0 {
-                            break;
-                        }
+                    if c2 == ']' {
+                        break;
                     }
                 }
                 continue;
             }
         }
-        if skip_depth == 0 {
-            result.push(c);
-        }
+        result.push(c);
     }
 
     result
@@ -159,8 +153,12 @@ mod tests {
     use super::*;
     use crate::parser::parse;
 
+    // ========================================================================
+    // Basic Formatting Tests
+    // ========================================================================
+
     #[test]
-    fn test_lichess_format() {
+    fn test_lichess_format_moves_on_separate_lines() {
         let tree = parse("1. e4 e5 2. Nf3").unwrap();
         let options = OutputOptions {
             headers: false,
@@ -172,10 +170,37 @@ mod tests {
         // Each move should be on its own line
         assert!(pgn.contains("1. e4\n"));
         assert!(pgn.contains("1... e5\n"));
+        assert!(pgn.contains("2. Nf3\n"));
     }
 
     #[test]
-    fn test_lichess_with_comments() {
+    fn test_lichess_with_headers() {
+        let tree = parse(r#"[Event "Test"][White "Alice"] 1. e4 1-0"#).unwrap();
+        let options = OutputOptions::default();
+        let pgn = to_lichess(&tree, &options);
+
+        assert!(pgn.contains("[Event \"Test\"]"));
+        assert!(pgn.contains("[White \"Alice\"]"));
+    }
+
+    #[test]
+    fn test_lichess_without_headers() {
+        let tree = parse(r#"[Event "Test"] 1. e4"#).unwrap();
+        let options = OutputOptions {
+            headers: false,
+            ..Default::default()
+        };
+        let pgn = to_lichess(&tree, &options);
+
+        assert!(!pgn.contains("[Event"));
+    }
+
+    // ========================================================================
+    // Comment Formatting Tests
+    // ========================================================================
+
+    #[test]
+    fn test_lichess_comment_on_separate_line() {
         let tree = parse("1. e4 {Opening move} e5").unwrap();
         let options = OutputOptions {
             headers: false,
@@ -187,5 +212,196 @@ mod tests {
         // Comment should be on separate line without braces
         assert!(pgn.contains("Opening move"));
         assert!(!pgn.contains("{"));
+        assert!(!pgn.contains("}"));
+    }
+
+    #[test]
+    fn test_lichess_without_comments() {
+        let tree = parse("1. e4 {Opening move} e5").unwrap();
+        let options = OutputOptions {
+            headers: false,
+            result: false,
+            comments: false,
+            ..Default::default()
+        };
+        let pgn = to_lichess(&tree, &options);
+
+        assert!(!pgn.contains("Opening move"));
+    }
+
+    #[test]
+    fn test_lichess_strip_clocks() {
+        let tree = parse("1. e4 {[%clk 0:03:00] Good move} e5").unwrap();
+        let options = OutputOptions {
+            headers: false,
+            result: false,
+            strip_clocks: true,
+            ..Default::default()
+        };
+        let pgn = to_lichess(&tree, &options);
+
+        assert!(!pgn.contains("%clk"));
+        assert!(pgn.contains("Good move"));
+    }
+
+    #[test]
+    fn test_lichess_strip_evals() {
+        let tree = parse("1. e4 {[%eval +0.5] Good position} e5").unwrap();
+        let options = OutputOptions {
+            headers: false,
+            result: false,
+            strip_evals: true,
+            ..Default::default()
+        };
+        let pgn = to_lichess(&tree, &options);
+
+        assert!(!pgn.contains("%eval"));
+        assert!(pgn.contains("Good position"));
+    }
+
+    // ========================================================================
+    // NAG Tests
+    // ========================================================================
+
+    #[test]
+    fn test_lichess_nags_on_move_line() {
+        let tree = parse("1. e4! e5?").unwrap();
+        let options = OutputOptions {
+            headers: false,
+            result: false,
+            ..Default::default()
+        };
+        let pgn = to_lichess(&tree, &options);
+
+        // NAGs should be on the same line as the move
+        assert!(pgn.contains("e4 !"));
+        assert!(pgn.contains("e5 ?"));
+    }
+
+    #[test]
+    fn test_lichess_without_nags() {
+        let tree = parse("1. e4! e5?").unwrap();
+        let options = OutputOptions {
+            headers: false,
+            result: false,
+            nags: false,
+            ..Default::default()
+        };
+        let pgn = to_lichess(&tree, &options);
+
+        assert!(!pgn.contains("!"));
+        assert!(!pgn.contains("?"));
+    }
+
+    // ========================================================================
+    // Variation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_lichess_variation_formatting() {
+        let tree = parse("1. e4 e5 (1... c5) 2. Nf3").unwrap();
+        let options = OutputOptions {
+            headers: false,
+            result: false,
+            ..Default::default()
+        };
+        let pgn = to_lichess(&tree, &options);
+
+        // Variations should be in parentheses on separate lines
+        assert!(pgn.contains("(\n"));
+        assert!(pgn.contains(")\n"));
+        assert!(pgn.contains("c5"));
+    }
+
+    #[test]
+    fn test_lichess_without_variations() {
+        let tree = parse("1. e4 e5 (1... c5) 2. Nf3").unwrap();
+        let options = OutputOptions {
+            headers: false,
+            result: false,
+            variations: false,
+            ..Default::default()
+        };
+        let pgn = to_lichess(&tree, &options);
+
+        assert!(!pgn.contains("("));
+        assert!(!pgn.contains("c5"));
+    }
+
+    // ========================================================================
+    // Result Tests
+    // ========================================================================
+
+    #[test]
+    fn test_lichess_with_result() {
+        let tree = parse("1. e4 e5 1-0").unwrap();
+        let options = OutputOptions {
+            headers: false,
+            ..Default::default()
+        };
+        let pgn = to_lichess(&tree, &options);
+
+        assert!(pgn.contains("1-0"));
+    }
+
+    #[test]
+    fn test_lichess_without_result() {
+        let tree = parse("1. e4 e5 1-0").unwrap();
+        let options = OutputOptions {
+            headers: false,
+            result: false,
+            ..Default::default()
+        };
+        let pgn = to_lichess(&tree, &options);
+
+        assert!(!pgn.contains("1-0"));
+    }
+
+    // ========================================================================
+    // Helper Function Tests
+    // ========================================================================
+
+    #[test]
+    fn test_process_lichess_comment_strips_clock() {
+        let options = OutputOptions {
+            strip_clocks: true,
+            ..Default::default()
+        };
+        let result = process_lichess_comment("[%clk 0:03:00] Good move", &options);
+        assert!(!result.contains("%clk"));
+        assert!(result.contains("Good move"));
+    }
+
+    #[test]
+    fn test_process_lichess_comment_strips_eval() {
+        let options = OutputOptions {
+            strip_evals: true,
+            ..Default::default()
+        };
+        let result = process_lichess_comment("[%eval +0.5] Good position", &options);
+        assert!(!result.contains("%eval"));
+        assert!(result.contains("Good position"));
+    }
+
+    #[test]
+    fn test_process_lichess_comment_preserves_text() {
+        let options = OutputOptions::default();
+        let result = process_lichess_comment("  Interesting move  ", &options);
+        assert_eq!(result, "Interesting move");
+    }
+
+    #[test]
+    fn test_remove_command_basic() {
+        let text = "[%clk 0:03:00] Normal text";
+        let result = remove_command(text, "clk");
+        assert!(!result.contains("%clk"));
+        assert!(result.contains("Normal text"));
+    }
+
+    #[test]
+    fn test_remove_command_multiple() {
+        let text = "[%clk 1:00:00] move [%clk 0:30:00]";
+        let result = remove_command(text, "clk");
+        assert!(!result.contains("%clk"));
     }
 }

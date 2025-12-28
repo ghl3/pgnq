@@ -19,29 +19,40 @@ pub fn parse(input: &str) -> Result<GameTree> {
 
 /// Parse multiple games from a PGN string
 pub fn parse_all(input: &str) -> Result<Vec<GameTree>> {
-    // Split on double newlines followed by headers or end
+    // Split on headers that appear after moves (indicating a new game)
     let mut games = Vec::new();
     let mut current_start = 0;
-    let mut in_game = false;
+    let mut seen_moves = false; // Track if we've seen movetext after headers
+    let mut current_pos = 0;
 
-    for (i, line) in input.lines().enumerate() {
-        let line_start = input[current_start..]
-            .find(line)
-            .map(|p| current_start + p)
-            .unwrap_or(current_start);
+    for line in input.lines() {
+        let line_len = line.len();
+        let is_header = line.starts_with('[') && line.contains('"');
+        let is_move_line = !line.trim().is_empty()
+            && !is_header
+            && !line.trim().starts_with(';'); // Not a semicolon comment
 
-        if line.starts_with('[') && line.contains('"') {
-            if in_game && i > 0 {
-                // New game starting, parse the previous one
-                let game_text = &input[current_start..line_start];
-                if !game_text.trim().is_empty() {
-                    games.push(parse(game_text)?);
-                }
-                current_start = line_start;
+        if is_header && seen_moves {
+            // New game starting - we've seen moves and now see a new header
+            let game_text = &input[current_start..current_pos];
+            if !game_text.trim().is_empty() {
+                games.push(parse(game_text)?);
             }
-            in_game = true;
-        } else if !line.trim().is_empty() {
-            in_game = true;
+            current_start = current_pos;
+            seen_moves = false;
+        } else if is_move_line {
+            seen_moves = true;
+        }
+
+        // Move position past this line and its newline
+        current_pos += line_len;
+        if current_pos < input.len() {
+            // Skip the newline character(s)
+            if input[current_pos..].starts_with("\r\n") {
+                current_pos += 2;
+            } else if input[current_pos..].starts_with('\n') {
+                current_pos += 1;
+            }
         }
     }
 

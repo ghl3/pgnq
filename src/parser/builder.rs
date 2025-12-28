@@ -14,8 +14,8 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
     let mut path_stack: Vec<*mut GameNode> = vec![&mut tree.root as *mut GameNode];
 
     // Stack for tracking where to return after a variation ends
-    // Each entry is (path_depth, node_ptr) where we should restore to
-    let mut return_stack: Vec<(usize, *mut GameNode)> = Vec::new();
+    // Each entry is (path_depth, node_ptr, move_number, expect_black) to restore
+    let mut return_stack: Vec<(usize, *mut GameNode, u16, bool)> = Vec::new();
 
     let mut pending_comment = String::new();
     let mut pending_nags: Vec<Nag> = Vec::new();
@@ -165,10 +165,15 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
 
             Token::VariationStart => {
                 // Variation is an alternative to the preceding move
-                // Push current position to return to after variation ends
+                // Push current position AND move tracking state to restore later
                 if path_stack.len() > 1 {
                     let current_ptr = *path_stack.last().unwrap();
-                    return_stack.push((path_stack.len(), current_ptr));
+                    return_stack.push((
+                        path_stack.len(),
+                        current_ptr,
+                        current_move_number,
+                        expect_black,
+                    ));
                     // Pop the current move to go back to its parent
                     // The variation's moves will be siblings of the current move
                     path_stack.pop();
@@ -177,10 +182,15 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
 
             Token::VariationEnd => {
                 // Restore to the position we saved at VariationStart
-                if let Some((depth, node_ptr)) = return_stack.pop() {
+                if let Some((depth, node_ptr, saved_move_num, saved_expect_black)) =
+                    return_stack.pop()
+                {
                     // Truncate path to one less than saved depth, then push saved node
                     path_stack.truncate(depth - 1);
                     path_stack.push(node_ptr);
+                    // Restore move tracking state
+                    current_move_number = saved_move_num;
+                    expect_black = saved_expect_black;
                 }
             }
 
