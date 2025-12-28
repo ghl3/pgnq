@@ -1,0 +1,43 @@
+[package]
+name = "pgnq"
+version = "0.1.0"
+edition = "2021"
+description = "A Unix-like CLI tool for querying and manipulating chess PGN files"
+license = "MIT"
+keywords = ["chess", "pgn", "parser", "cli"]
+categories = ["command-line-utilities", "parser-implementations"]
+
+[dependencies]
+# CLI framework
+clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Serialization (for JSON output)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Lexer generator
+logos = "0.14"
+
+# Terminal output
+colored = "2.0"
+
+[dev-dependencies]
+pretty_assertions = "1.4"
+tempfile = "3.9"
+
+[[bin]]
+name = "pgnq"
+path = "src/main.rs"
+
+[lib]
+name = "pgnq"
+path = "src/lib.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
