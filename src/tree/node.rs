@@ -206,7 +206,8 @@ impl GameNode {
 
     /// Create a deep copy of this subtree
     pub fn deep_clone(&self) -> Self {
-        // Use iterative approach to handle deep trees
+        // Use iterative approach to handle deep trees without stack overflow.
+        // Uses indices instead of raw pointers to avoid undefined behavior from Vec reallocation.
         let mut result = GameNode {
             san: self.san.clone(),
             move_number: self.move_number,
@@ -216,15 +217,20 @@ impl GameNode {
             children: Vec::with_capacity(self.children.len()),
         };
 
-        // Stack of (source node, target parent pointer, child index to process)
-        let mut stack: Vec<(&GameNode, *mut GameNode, usize)> = vec![];
+        // Stack of (source node path, target path in result)
+        // Both paths are Vec<usize> representing child indices at each level
+        let mut stack: Vec<(Vec<usize>, Vec<usize>)> = vec![];
 
         // Initialize with children of self
-        for (i, child) in self.children.iter().enumerate().rev() {
-            stack.push((child, &mut result as *mut GameNode, i));
+        for i in (0..self.children.len()).rev() {
+            stack.push((vec![i], vec![i]));
         }
 
-        while let Some((source, parent_ptr, _idx)) = stack.pop() {
+        while let Some((source_path, target_path)) = stack.pop() {
+            // Navigate to source node
+            let source = get_node_by_path(self, &source_path);
+
+            // Create copy of source node (without children initially)
             let child_copy = GameNode {
                 san: source.san.clone(),
                 move_number: source.move_number,
@@ -234,19 +240,40 @@ impl GameNode {
                 children: Vec::with_capacity(source.children.len()),
             };
 
-            // SAFETY: We control the parent pointer lifetime
-            let parent = unsafe { &mut *parent_ptr };
-            parent.children.push(child_copy);
-            let new_child_ptr = parent.children.last_mut().unwrap() as *mut GameNode;
+            // Navigate to target parent and add copy
+            let target_parent = get_node_mut_by_path(&mut result, &target_path[..target_path.len() - 1]);
+            target_parent.children.push(child_copy);
 
             // Add children to process
-            for (i, grandchild) in source.children.iter().enumerate().rev() {
-                stack.push((grandchild, new_child_ptr, i));
+            for i in (0..source.children.len()).rev() {
+                let mut new_source_path = source_path.clone();
+                new_source_path.push(i);
+                let mut new_target_path = target_path.clone();
+                new_target_path.push(i);
+                stack.push((new_source_path, new_target_path));
             }
         }
 
         result
     }
+}
+
+/// Navigate to a node by path (immutable)
+fn get_node_by_path<'a>(root: &'a GameNode, path: &[usize]) -> &'a GameNode {
+    let mut current = root;
+    for &idx in path {
+        current = &current.children[idx];
+    }
+    current
+}
+
+/// Navigate to a node by path (mutable)
+fn get_node_mut_by_path<'a>(root: &'a mut GameNode, path: &[usize]) -> &'a mut GameNode {
+    let mut current = root;
+    for &idx in path {
+        current = &mut current.children[idx];
+    }
+    current
 }
 
 impl Default for GameNode {

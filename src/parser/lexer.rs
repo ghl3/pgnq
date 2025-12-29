@@ -39,8 +39,107 @@ pub fn tokenize(input: &str) -> Vec<Token> {
     tokens
 }
 
+/// Detect and collapse variations that are actually parenthetical references in text.
+/// Pattern: BareText ... ( MoveNumber? Move ) ... BareText
+/// These are NOT real variations - they're references like "the Petrosian (7.d5)"
+fn collapse_embedded_variations(tokens: &mut Vec<Token>) {
+    let mut i = 0;
+    while i < tokens.len() {
+        // Look for BareText followed eventually by VariationStart
+        if !matches!(tokens[i], Token::BareText(_)) {
+            i += 1;
+            continue;
+        }
+
+        // Find VariationStart after this BareText
+        let var_start = (i + 1..tokens.len()).find(|&j| matches!(tokens[j], Token::VariationStart));
+
+        let Some(var_start_idx) = var_start else {
+            i += 1;
+            continue;
+        };
+
+        // Check all tokens between i and var_start are BareText or Newline
+        let all_baretext = (i + 1..var_start_idx)
+            .all(|j| matches!(tokens[j], Token::BareText(_) | Token::Newline));
+        if !all_baretext {
+            i += 1;
+            continue;
+        }
+
+        // Find matching VariationEnd (handle nesting)
+        let mut depth = 0;
+        let mut var_end_idx = None;
+        for j in var_start_idx..tokens.len() {
+            match &tokens[j] {
+                Token::VariationStart => depth += 1,
+                Token::VariationEnd => {
+                    depth -= 1;
+                    if depth == 0 {
+                        var_end_idx = Some(j);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let Some(var_end_idx) = var_end_idx else {
+            i += 1;
+            continue;
+        };
+
+        // Count move tokens inside the variation
+        let move_count = (var_start_idx + 1..var_end_idx)
+            .filter(|&j| tokens[j].is_move())
+            .count();
+
+        // If only 1-2 moves AND followed by BareText, it's likely a parenthetical reference
+        if move_count > 2 {
+            i += 1;
+            continue; // Real variation with multiple moves
+        }
+
+        // Check if followed by BareText (not end of input, not another move)
+        let followed_by_baretext = var_end_idx + 1 < tokens.len()
+            && matches!(tokens[var_end_idx + 1], Token::BareText(_));
+
+        if followed_by_baretext {
+            // This is a parenthetical reference - collapse the variation into BareText
+            let var_text = tokens[var_start_idx..=var_end_idx]
+                .iter()
+                .map(|t| match t {
+                    Token::VariationStart => "(".to_string(),
+                    Token::VariationEnd => ")".to_string(),
+                    Token::MoveNumber(s) => s.clone(),
+                    Token::PawnMove(s) | Token::PieceMove(s) => s.clone(),
+                    Token::CastleShort(s) | Token::CastleLong(s) => s.clone(),
+                    Token::BareText(s) => s.clone(),
+                    _ => String::new(),
+                })
+                .collect::<Vec<_>>()
+                .join("");
+
+            // Replace variation tokens with single BareText
+            tokens.splice(
+                var_start_idx..=var_end_idx,
+                std::iter::once(Token::BareText(var_text)),
+            );
+            // Don't increment i - check again from same position
+            continue;
+        }
+
+        i += 1;
+    }
+}
+
 /// Post-process tokens to handle Lichess-style bare text comments
 fn post_process_tokens(tokens: &mut Vec<Token>) {
+    // First: collapse embedded variations (parenthetical references in text)
+    // These are patterns like "the Petrosian Variation (7.d5)" where (7.d5)
+    // is NOT a real variation but a textual reference
+    collapse_embedded_variations(tokens);
+
     // In Lichess format, bare text lines that don't look like moves are comments
     // We detect this by checking if bare text appears after a move and before the next move
 

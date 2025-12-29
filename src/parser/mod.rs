@@ -128,4 +128,64 @@ mod tests {
         let d4 = tree.root.find_child("d4").unwrap();
         assert_eq!(d4.san, "d4");
     }
+
+    // ========================================================================
+    // Baretext Parser Reproducer Tests
+    // ========================================================================
+
+    #[test]
+    fn test_baretext_ignores_parenthetical_move_mention() {
+        let pgn = r#"1. e4 e5
+This avoids the Petrosian Variation (7.d5) which is problematic.
+2. Nf3 *"#;
+        let tree = parse(pgn).unwrap();
+        // Should have 3 moves: e4, e5, Nf3
+        // Should NOT have a "d5" node - the "(7.d5)" is a textual reference
+        assert_eq!(tree.count_nodes(), 3, "Expected 3 nodes (e4, e5, Nf3), got {}", tree.count_nodes());
+    }
+
+    #[test]
+    fn test_multiple_parenthetical_references() {
+        let pgn = r#"1. e4 e5
+White can play the Ruy Lopez (3.Bb5) or Italian (3.Bc4) here.
+2. Nf3 *"#;
+        let tree = parse(pgn).unwrap();
+        // Should have 3 moves, not 5
+        assert_eq!(tree.count_nodes(), 3, "Expected 3 nodes, got {}", tree.count_nodes());
+    }
+
+    #[test]
+    fn test_real_variation_preserved() {
+        let pgn = r#"1. e4 e5 (1... c5 2. Nf3) 2. Nf3 *"#;
+        let tree = parse(pgn).unwrap();
+        // Should have 5 moves: e4, e5, c5, Nf3 (in var), Nf3 (main)
+        // The variation has multiple moves, so it's NOT a parenthetical reference
+        assert_eq!(tree.count_nodes(), 5, "Expected 5 nodes, got {}", tree.count_nodes());
+        // e4 should have a variation
+        let e4 = tree.root.find_child("e4").unwrap();
+        assert!(e4.has_variations(), "e4 should have variations");
+    }
+
+    #[test]
+    fn test_lichess_baretext_with_references() {
+        let pgn = r#"1. d4 Nf6 2. c4 g6 3. Nc3 Bg7 4. e4 d6 5. Nf3 O-O 6. Be2
+This move order avoids the Petrosian Variation (7.d5) and the Exchange Variation.
+Na6
+The knight develops to the rim.
+7. O-O *"#;
+        let tree = parse(pgn).unwrap();
+        // Main line: d4, Nf6, c4, g6, Nc3, Bg7, e4, d6, Nf3, O-O, Be2, Na6, O-O = 13 moves
+        // No spurious d5 variation
+        assert_eq!(tree.count_nodes(), 13, "Expected 13 nodes, got {}", tree.count_nodes());
+    }
+
+    #[test]
+    fn test_stats_consistency() {
+        let pgn = "1. e4 e5 (1... c5) 2. Nf3 *";
+        let tree = parse(pgn).unwrap();
+        let count = tree.count_nodes();
+        // Verify count is stable across multiple calls
+        assert_eq!(tree.count_nodes(), count);
+        assert_eq!(tree.count_nodes(), count);
+    }
 }

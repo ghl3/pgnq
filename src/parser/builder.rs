@@ -5,17 +5,23 @@ use crate::error::Result;
 use crate::nag::Nag;
 use crate::tree::{GameNode, GameResult, GameTree};
 
+/// A path from the root to a specific node in the tree.
+/// Each element is a child index at that level.
+/// Empty path means root node.
+type NodePath = Vec<usize>;
+
 /// Build a GameTree from a token stream
 pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
     let mut tree = GameTree::new();
 
-    // Track the path from root to current position for proper variation handling
-    // path_stack[i] points to the node at depth i (path_stack[0] = root)
-    let mut path_stack: Vec<*mut GameNode> = vec![&mut tree.root as *mut GameNode];
+    // Track the path from root to current position using indices instead of raw pointers.
+    // This avoids undefined behavior from Vec reallocation invalidating pointers.
+    // path[i] is the child index at depth i (path[0] is index of first move under root)
+    let mut current_path: NodePath = Vec::new();
 
     // Stack for tracking where to return after a variation ends
-    // Each entry is (path_depth, node_ptr, move_number, expect_black) to restore
-    let mut return_stack: Vec<(usize, *mut GameNode, u16, bool)> = Vec::new();
+    // Each entry is (path_to_node, move_number, expect_black) to restore
+    let mut return_stack: Vec<(NodePath, u16, bool)> = Vec::new();
 
     let mut pending_comment = String::new();
     let mut pending_nags: Vec<Nag> = Vec::new();
@@ -55,11 +61,11 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
                 }
                 node.nags = std::mem::take(&mut pending_nags);
 
-                // Get parent (last node in path_stack) and add child
-                let parent_ptr = *path_stack.last().unwrap();
-                let parent = unsafe { &mut *parent_ptr };
-                let new_node = parent.add_child(node);
-                path_stack.push(new_node as *mut GameNode);
+                // Navigate to parent node and add child
+                let parent = get_node_mut(&mut tree.root, &current_path);
+                parent.children.push(node);
+                let new_child_idx = parent.children.len() - 1;
+                current_path.push(new_child_idx);
 
                 if expect_black {
                     current_move_number += 1;
@@ -75,16 +81,15 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
                     continue;
                 }
 
-                // path_stack.len() == 1 means we're at root (only root in stack)
-                if path_stack.len() == 1 {
+                // current_path.is_empty() means we're at root (no moves yet)
+                if current_path.is_empty() {
                     if !pending_comment.is_empty() {
                         pending_comment.push(' ');
                     }
                     pending_comment.push_str(text);
                 } else {
-                    // Get the current move node (last in path_stack)
-                    let current_ptr = *path_stack.last().unwrap();
-                    let current = unsafe { &mut *current_ptr };
+                    // Get the current move node
+                    let current = get_node_mut(&mut tree.root, &current_path);
                     if !current.comment.is_empty() {
                         current.comment.push(' ');
                     }
@@ -98,14 +103,13 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
                     continue;
                 }
                 // Bare text is treated as a comment in Lichess format
-                if path_stack.len() == 1 {
+                if current_path.is_empty() {
                     if !pending_comment.is_empty() {
                         pending_comment.push(' ');
                     }
                     pending_comment.push_str(text);
                 } else {
-                    let current_ptr = *path_stack.last().unwrap();
-                    let current = unsafe { &mut *current_ptr };
+                    let current = get_node_mut(&mut tree.root, &current_path);
                     if !current.comment.is_empty() {
                         current.comment.push(' ');
                     }
@@ -115,11 +119,10 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
 
             Token::Nag(nag_str) => {
                 if let Some(nag) = Nag::from_dollar_notation(nag_str) {
-                    if path_stack.len() == 1 {
+                    if current_path.is_empty() {
                         pending_nags.push(nag);
                     } else {
-                        let current_ptr = *path_stack.last().unwrap();
-                        let current = unsafe { &mut *current_ptr };
+                        let current = get_node_mut(&mut tree.root, &current_path);
                         current.nags.push(nag);
                     }
                 }
@@ -134,11 +137,10 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
             | Token::Question(_) => {
                 if let Some(nag_val) = token.as_nag_value() {
                     let nag = Nag(nag_val);
-                    if path_stack.len() == 1 {
+                    if current_path.is_empty() {
                         pending_nags.push(nag);
                     } else {
-                        let current_ptr = *path_stack.last().unwrap();
-                        let current = unsafe { &mut *current_ptr };
+                        let current = get_node_mut(&mut tree.root, &current_path);
                         current.nags.push(nag);
                     }
                 }
@@ -153,11 +155,10 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
             | Token::BlackSlightlyBetter => {
                 if let Some(nag_val) = token.as_nag_value() {
                     let nag = Nag(nag_val);
-                    if path_stack.len() == 1 {
+                    if current_path.is_empty() {
                         pending_nags.push(nag);
                     } else {
-                        let current_ptr = *path_stack.last().unwrap();
-                        let current = unsafe { &mut *current_ptr };
+                        let current = get_node_mut(&mut tree.root, &current_path);
                         current.nags.push(nag);
                     }
                 }
@@ -166,29 +167,24 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
             Token::VariationStart => {
                 // Variation is an alternative to the preceding move
                 // Push current position AND move tracking state to restore later
-                if path_stack.len() > 1 {
-                    let current_ptr = *path_stack.last().unwrap();
+                if !current_path.is_empty() {
                     return_stack.push((
-                        path_stack.len(),
-                        current_ptr,
+                        current_path.clone(),
                         current_move_number,
                         expect_black,
                     ));
                     // Pop the current move to go back to its parent
                     // The variation's moves will be siblings of the current move
-                    path_stack.pop();
+                    current_path.pop();
                 }
             }
 
             Token::VariationEnd => {
                 // Restore to the position we saved at VariationStart
-                if let Some((depth, node_ptr, saved_move_num, saved_expect_black)) =
+                if let Some((saved_path, saved_move_num, saved_expect_black)) =
                     return_stack.pop()
                 {
-                    // Truncate path to one less than saved depth, then push saved node
-                    path_stack.truncate(depth - 1);
-                    path_stack.push(node_ptr);
-                    // Restore move tracking state
+                    current_path = saved_path;
                     current_move_number = saved_move_num;
                     expect_black = saved_expect_black;
                 }
@@ -214,6 +210,15 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
     }
 
     Ok(tree)
+}
+
+/// Navigate to a node given a path of child indices
+fn get_node_mut<'a>(root: &'a mut GameNode, path: &[usize]) -> &'a mut GameNode {
+    let mut current = root;
+    for &idx in path {
+        current = &mut current.children[idx];
+    }
+    current
 }
 
 /// Parse a header string like [Event "Test Game"] into (key, value)
