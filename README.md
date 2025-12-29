@@ -769,52 +769,32 @@ Embedded in comments using `[%command value]` syntax:
 
 ## Piping and Composition
 
-`pgnq` is designed for Unix pipelines:
+All commands read from stdin when given `-` or no file argument, and write to stdout by default. This makes `pgnq` composable with itself and standard Unix tools like `jq`, `head`, and shell loops.
 
 ```bash
-# Chain operations
+# Chain commands together
 cat game.pgn | pgnq convert -F standard | pgnq filter --main-line
 
-# Process multiple files
-for f in *.pgn; do pgnq stats "$f" --json; done | jq -s '.'
+# Merge a directory and analyze the result
+pgnq merge repertoire/*.pgn | pgnq stats --json | jq '.max_depth'
 
-# Extract and convert in one pipeline
-pgnq extract study.pgn -p "e4/c5" | pgnq convert -F lichess > sicilian.pgn
-
-# Use with other tools
-pgnq tree game.pgn | head -20
-pgnq stats game.pgn --json | jq '.total_nodes'
-```
-
-## More Examples
-
-### Complex Pipeline Operations
-
-```bash
-# Extract all annotated lines from multiple studies
+# Extract annotated lines from multiple studies
 for f in studies/*.pgn; do
   pgnq filter "$f" --has-comment | pgnq convert -F minimal
 done > annotated_lines.pgn
 
-# Find the deepest variations across a repertoire
-pgnq merge repertoire/*.pgn | pgnq stats --json | jq '.max_depth'
-
-# Create a clean export stripping all engine analysis
+# Strip engine analysis but keep human comments
 pgnq convert study.pgn --strip-clocks --strip-evals --no-nags \
   | pgnq filter --has-comment \
   > human_annotations_only.pgn
 
-# Split a large database and get stats on each part
+# Split a database and summarize each part
 pgnq split database.pgn -s "e4:e4_games" -s "d4:d4_games" -o parts/
 for f in parts/*.pgn; do
-  echo "=== $f ==="
-  pgnq stats "$f" --json | jq '{nodes: .total_nodes, lines: .leaf_nodes}'
+  echo "$f: $(pgnq stats "$f" --json | jq -r '[.total_nodes, .leaf_nodes] | join(" nodes, ") + " lines"')"
 done
 
-# Merge overlapping repertoires, preferring comments from the first
-pgnq merge primary_repertoire.pgn secondary_repertoire.pgn -o combined.pgn
-
-# Convert an entire directory to Lichess format
+# Batch convert to Lichess format
 for f in *.pgn; do
   pgnq convert "$f" -F lichess -o "lichess_${f}"
 done
