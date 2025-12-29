@@ -18,17 +18,16 @@ use crate::common::*;
 use crate::dsl::*;
 
 #[test]
-fn test_sicilian_defense() {
-    let actual = parse_pgn("1. e4 c5 {Sicilian Defense} 2. Nf3 *");
+fn test_ruy_lopez() {
+    let actual = parse_pgn("1. e4! e5 2. Nf3 Nc6 3. Bb5 {Ruy Lopez} *");
 
+    // Path-based API - clean and readable
     let expected = TreeExpectation::new()
-        .result(GameResult::Ongoing)
-        .root("e4", |n| n
-            .child("c5", |n| n
-                .comment_contains("Sicilian")
-                .leaf("Nf3")
-            )
-        );
+        .ongoing()
+        .line(&["e4", "e5", "Nf3", "Nc6", "Bb5"])
+        .at(&["e4"]).nag(Nag::GOOD_MOVE)
+        .at(&["e4", "e5", "Nf3", "Nc6", "Bb5"]).comment_contains("Ruy Lopez")
+        .build();
 
     assert_tree_contains!(actual, expected);
 }
@@ -36,52 +35,51 @@ fn test_sicilian_defense() {
 
 ## DSL Components
 
+### Path-based API (Recommended)
+
+The path-based API avoids nested closures and provides a flat, readable structure:
+
+```rust
+// Annotate nodes at specific paths
+TreeExpectation::new()
+    .ongoing()
+    .line(&["e4", "e5", "Nf3", "Nc6"])          // Main line exists
+    .at(&["e4"]).nag(Nag::GOOD_MOVE)             // e4 has good move NAG
+    .at(&["e4", "e5"]).comment_contains("reply") // e5 has comment
+    .at(&["e4", "e5", "Nf3"]).has_nag()          // Nf3 has some NAG
+    .build()
+
+// Specify children/variations at a path
+TreeExpectation::new()
+    .at(&["e4"]).children(&["e5", "c5", "e6", "d5"]).has_variations()
+    .at(&["e4", "c5"]).comment_contains("Sicilian")
+    .build()
+```
+
 ### TreeExpectation - Building Expected Trees
 
 ```rust
-// Simple main line (no properties to check on individual nodes)
+// Simple main line
 TreeExpectation::new()
-    .result(GameResult::WhiteWins)
+    .white_wins()
     .main_line(&["e4", "e5", "Nf3", "Nc6"])
 
 // With headers
 TreeExpectation::new()
     .header("Event", "World Championship")
     .header("White", "Fischer")
-    .result(GameResult::WhiteWins)
-    .main_line(&["c4", "e6"])
+    .white_wins()
+    .line(&["c4", "e6"])
+    .build()
 
-// With inline node properties using closures
+// Deep annotations without pyramid of doom
 TreeExpectation::new()
-    .root("e4", |n| n
-        .nag(Nag::GOOD_MOVE)
-        .comment_contains("King's Pawn")
-        .child("e5", |n| n
-            .comment("Symmetrical response")
-        )
-    )
-```
-
-### NodeExpectation - Inline Node Properties
-
-Properties are declared **inline** with node creation using closures. This keeps everything together and makes trees easy to read:
-
-```rust
-TreeExpectation::new()
-    .root("e4", |n| n
-        .nag(Nag::GOOD_MOVE)              // Has specific NAG
-        .comment("Opening move")           // Exact comment match
-        .comment_contains("Opening")       // Partial comment match
-        .has_child("e5")                   // Has child with this SAN
-        .children_count(2)                 // Exact number of children
-        .has_variations()                  // Has at least one variation
-        .child("e5", |n| n                 // Continue to child
-            .child("Nf3", |n| n)
-        )
-        .variation("c5", |n| n             // Add variation
-            .comment("Sicilian")
-        )
-    )
+    .ongoing()
+    .line(&["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4"])
+    .at(&["e4"]).nag(Nag::GOOD_MOVE)
+    .at(&["e4", "e5", "Nf3", "Nc6", "Bb5"]).comment_contains("Ruy Lopez")
+    .at(&["e4", "e5", "Nf3", "Nc6", "Bb5", "a6"]).comment_contains("Morphy")
+    .build()
 ```
 
 ### Comparison Macros
@@ -94,9 +92,59 @@ assert_tree_contains!(actual, expected);
 assert_tree_eq!(actual, expected);
 ```
 
-## Deep Tree Examples
+## Path-based API Examples
 
-### Inline Closures (Recommended)
+### Simple Annotations
+
+```rust
+let expected = TreeExpectation::new()
+    .ongoing()
+    .line(&["e4", "e5", "Nf3", "Nc6"])
+    .at(&["e4"]).nag(Nag::GOOD_MOVE).comment_contains("Opening")
+    .at(&["e4", "e5"]).nag(Nag::POOR_MOVE)
+    .build();
+```
+
+### Variations
+
+```rust
+// Check that e4 has multiple children (variations)
+let expected = TreeExpectation::new()
+    .at(&["e4"]).children(&["e5", "c5", "e6", "d5"]).has_variations()
+    .build();
+```
+
+### Deep Trees Without Pyramid of Doom
+
+```rust
+// Old closure style (avoid for deep trees):
+TreeExpectation::new()
+    .root("e4", |n| n
+        .nag(Nag::GOOD_MOVE)
+        .child("e5", |n| n
+            .child("Nf3", |n| n
+                .child("Nc6", |n| n
+                    .child("Bb5", |n| n
+                        .comment_contains("Ruy Lopez")
+                    )
+                )
+            )
+        )
+    )
+
+// New path style (preferred):
+TreeExpectation::new()
+    .line(&["e4", "e5", "Nf3", "Nc6", "Bb5"])
+    .at(&["e4"]).nag(Nag::GOOD_MOVE)
+    .at(&["e4", "e5", "Nf3", "Nc6", "Bb5"]).comment_contains("Ruy Lopez")
+    .build()
+```
+
+## Closure API (Legacy)
+
+The closure-based API is still available for complex cases where you need to build nested structures inline:
+
+### Inline Closures
 
 Properties and children are declared together, making trees easy to read:
 

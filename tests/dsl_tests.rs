@@ -454,3 +454,116 @@ fn test_multiple_variations() {
 
     assert_tree_contains!(tree, expected);
 }
+
+// ============================================================================
+// Path-based API Integration Tests
+// ============================================================================
+
+#[test]
+fn test_path_api_simple() {
+    let tree = parse_pgn("1. e4! e5 2. Nf3 Nc6 *");
+
+    // New clean path-based API
+    let expected = TreeExpectation::new()
+        .ongoing()
+        .line(&["e4", "e5", "Nf3", "Nc6"])
+        .at(&["e4"]).nag(Nag::GOOD_MOVE)
+        .build();
+
+    assert_tree_contains!(tree, expected);
+}
+
+#[test]
+fn test_path_api_multiple_annotations() {
+    let tree = parse_pgn("1. e4! {Great} e5? 2. Nf3!! {Attack} Nc6 *");
+
+    // Path-based API with multiple annotations
+    let expected = TreeExpectation::new()
+        .ongoing()
+        .line(&["e4", "e5", "Nf3", "Nc6"])
+        .at(&["e4"]).nag(Nag::GOOD_MOVE).comment_contains("Great")
+        .at(&["e4", "e5"]).nag(Nag::POOR_MOVE)
+        .at(&["e4", "e5", "Nf3"]).nag(Nag::BRILLIANT_MOVE).has_comment()
+        .build();
+
+    assert_tree_contains!(tree, expected);
+}
+
+#[test]
+fn test_path_api_variations() {
+    let tree = parse_pgn("1. e4 e5 (1... c5) (1... e6) (1... d5) *");
+
+    // Path-based API for variations - much cleaner!
+    let expected = TreeExpectation::new()
+        .ongoing()
+        .at(&["e4"]).children(&["e5", "c5", "e6", "d5"]).has_variations()
+        .build();
+
+    assert_tree_contains!(tree, expected);
+}
+
+#[test]
+fn test_path_api_deep_tree() {
+    let tree = parse_pgn(r#"
+        1. e4! {King's Pawn} e5 2. Nf3 Nc6 3. Bb5 {Ruy Lopez} a6 4. Ba4 Nf6 *
+    "#);
+
+    // Deep tree without pyramid of doom
+    let expected = TreeExpectation::new()
+        .ongoing()
+        .line(&["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6"])
+        .at(&["e4"]).nag(Nag::GOOD_MOVE).comment_contains("King's Pawn")
+        .at(&["e4", "e5", "Nf3", "Nc6", "Bb5"]).comment_contains("Ruy Lopez")
+        .build();
+
+    assert_tree_contains!(tree, expected);
+}
+
+#[test]
+fn test_path_api_vs_closure_api() {
+    let tree = parse_pgn("1. e4! e5? 2. Nf3!! Nc6?? *");
+
+    // Old closure-based API (still works)
+    let expected_closure = TreeExpectation::new()
+        .ongoing()
+        .root("e4", |n| n
+            .nag(Nag::GOOD_MOVE)
+            .child("e5", |n| n
+                .nag(Nag::POOR_MOVE)
+                .child("Nf3", |n| n
+                    .nag(Nag::BRILLIANT_MOVE)
+                    .child("Nc6", |n| n
+                        .nag(Nag::BLUNDER)
+                    )
+                )
+            )
+        );
+
+    // New path-based API (cleaner, no pyramid)
+    let expected_path = TreeExpectation::new()
+        .ongoing()
+        .line(&["e4", "e5", "Nf3", "Nc6"])
+        .at(&["e4"]).nag(Nag::GOOD_MOVE)
+        .at(&["e4", "e5"]).nag(Nag::POOR_MOVE)
+        .at(&["e4", "e5", "Nf3"]).nag(Nag::BRILLIANT_MOVE)
+        .at(&["e4", "e5", "Nf3", "Nc6"]).nag(Nag::BLUNDER)
+        .build();
+
+    // Both should work
+    assert_tree_contains!(tree, expected_closure);
+    assert_tree_contains!(tree, expected_path);
+}
+
+#[test]
+fn test_path_api_combined_with_main_line() {
+    let tree = parse_pgn("1. e4 e5 (1... c5 {Sicilian}) 2. Nf3 *");
+
+    let expected = TreeExpectation::new()
+        .ongoing()
+        .main_line(&["e4", "e5", "Nf3"])
+        .at(&["e4"]).has_variations().children(&["e5", "c5"])
+        .at(&["e4", "c5"]).comment_contains("Sicilian")
+        .build();
+
+    assert_tree_contains!(tree, expected);
+}

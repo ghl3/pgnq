@@ -5,20 +5,25 @@
 //!
 //! # Design Philosophy
 //!
-//! Node properties are declared **inline** with node creation using closures.
-//! This keeps properties close to where nodes are defined, making trees easier
-//! to read and write.
+//! Use a **path-based API** that avoids closures for cleaner, more readable tests.
 //!
 //! ```ignore
+//! // Clean path-based API (preferred)
 //! TreeExpectation::new()
-//!     .root("e4", |n| n
-//!         .nag(Nag::GOOD_MOVE)
-//!         .comment("Opening")
-//!         .child("e5", |n| n
-//!             .child("Nf3", |n| n)
-//!         )
-//!     )
+//!     .line(&["e4", "e5", "Nf3", "Nc6"])
+//!     .at(&["e4"]).nag(Nag::GOOD_MOVE).comment_contains("Opening")
+//!     .at(&["e4", "e5"]).nag(Nag::POOR_MOVE)
+//!     .at(&["e4"]).has_children(&["e5", "c5", "d5"])
+//!     .build()
+//!
+//! // Simple variations without closures
+//! TreeExpectation::new()
+//!     .line(&["e4", "e5", "Nf3"])
+//!     .at(&["e4"]).children(&["e5", "c5", "d5", "e6"])
+//!     .build()
 //! ```
+//!
+//! The closure-based API is still available for complex nested cases.
 
 use super::matcher::{CountMatcher, NagMatcher, StringMatcher};
 use pgnq::nag::Nag;
@@ -38,6 +43,8 @@ pub struct TreeExpectation {
     pub expected_main_line: Option<Vec<String>>,
     /// Expected node count (None = any count)
     pub node_count: Option<CountMatcher>,
+    /// Path-based expectations: (path, expectation) pairs
+    pub path_expectations: Vec<(Vec<String>, NodeExpectation)>,
 }
 
 /// A child expectation with SAN and node expectation
@@ -60,6 +67,7 @@ impl TreeExpectation {
             root_children: Vec::new(),
             expected_main_line: None,
             node_count: None,
+            path_expectations: Vec::new(),
         }
     }
 
@@ -181,6 +189,177 @@ impl TreeExpectation {
     pub fn node_count_at_least(mut self, count: usize) -> Self {
         self.node_count = Some(CountMatcher::at_least(count));
         self
+    }
+
+    // ========================================================================
+    // Path-based API (preferred - avoids closures)
+    // ========================================================================
+
+    /// Specify a linear main line path
+    ///
+    /// Creates expectations that this path exists in the tree.
+    /// Use `.at()` to add properties at specific points.
+    ///
+    /// # Example
+    /// ```ignore
+    /// TreeExpectation::new()
+    ///     .line(&["e4", "e5", "Nf3", "Nc6"])
+    ///     .at(&["e4"]).nag(Nag::GOOD_MOVE)
+    ///     .build()
+    /// ```
+    pub fn line(mut self, moves: &[&str]) -> Self {
+        self.expected_main_line = Some(moves.iter().map(|s| s.to_string()).collect());
+        self
+    }
+
+    /// Start building expectations at a specific path
+    ///
+    /// Returns a PathBuilder for adding properties at this path.
+    /// Chain multiple `.at()` calls to annotate different positions.
+    ///
+    /// # Example
+    /// ```ignore
+    /// TreeExpectation::new()
+    ///     .line(&["e4", "e5", "Nf3"])
+    ///     .at(&["e4"]).nag(Nag::GOOD_MOVE).comment_contains("Opening")
+    ///     .at(&["e4", "e5"]).nag(Nag::POOR_MOVE)
+    ///     .build()
+    /// ```
+    pub fn at(self, path: &[&str]) -> PathBuilder {
+        PathBuilder::new(self, path)
+    }
+}
+
+/// Builder for adding expectations at a specific path
+///
+/// Created by `TreeExpectation::at()`. Allows fluent chaining of
+/// property expectations at a path, then continuing to other paths
+/// or finishing with `.build()`.
+pub struct PathBuilder {
+    tree: TreeExpectation,
+    path: Vec<String>,
+    expectation: NodeExpectation,
+}
+
+impl PathBuilder {
+    fn new(tree: TreeExpectation, path: &[&str]) -> Self {
+        Self {
+            tree,
+            path: path.iter().map(|s| s.to_string()).collect(),
+            expectation: NodeExpectation::new(),
+        }
+    }
+
+    /// Expect a specific NAG at this path
+    pub fn nag(mut self, nag: Nag) -> Self {
+        self.expectation = self.expectation.nag(nag);
+        self
+    }
+
+    /// Expect multiple NAGs at this path
+    pub fn nags(mut self, nags: &[Nag]) -> Self {
+        self.expectation = self.expectation.nags(nags);
+        self
+    }
+
+    /// Expect at least one NAG at this path
+    pub fn has_nag(mut self) -> Self {
+        self.expectation = self.expectation.has_nag();
+        self
+    }
+
+    /// Expect no NAGs at this path
+    pub fn no_nags(mut self) -> Self {
+        self.expectation = self.expectation.no_nags();
+        self
+    }
+
+    /// Expect a specific comment at this path
+    pub fn comment(mut self, text: impl Into<String>) -> Self {
+        self.expectation = self.expectation.comment(text);
+        self
+    }
+
+    /// Expect comment containing substring at this path
+    pub fn comment_contains(mut self, text: impl Into<String>) -> Self {
+        self.expectation = self.expectation.comment_contains(text);
+        self
+    }
+
+    /// Expect a non-empty comment at this path
+    pub fn has_comment(mut self) -> Self {
+        self.expectation = self.expectation.has_comment();
+        self
+    }
+
+    /// Expect no comment at this path
+    pub fn no_comment(mut self) -> Self {
+        self.expectation = self.expectation.no_comment();
+        self
+    }
+
+    /// Expect specific children at this path (by SAN)
+    ///
+    /// # Example
+    /// ```ignore
+    /// .at(&["e4"]).children(&["e5", "c5", "d5"])  // e4 has these children
+    /// ```
+    pub fn children(mut self, sans: &[&str]) -> Self {
+        for san in sans {
+            self.expectation.children.push(ChildExpectation {
+                san: san.to_string(),
+                is_variation: false,
+                expectation: NodeExpectation::new(),
+            });
+        }
+        self
+    }
+
+    /// Expect a specific number of children at this path
+    pub fn children_count(mut self, count: usize) -> Self {
+        self.expectation = self.expectation.children_count(count);
+        self
+    }
+
+    /// Expect variations (more than one child) at this path
+    pub fn has_variations(mut self) -> Self {
+        self.expectation = self.expectation.has_variations();
+        self
+    }
+
+    /// Expect no variations at this path
+    pub fn no_variations(mut self) -> Self {
+        self.expectation = self.expectation.no_variations();
+        self
+    }
+
+    /// Continue to add expectations at another path
+    ///
+    /// Stores the current path's expectations and moves to a new path.
+    pub fn at(mut self, path: &[&str]) -> Self {
+        // Store current path expectations
+        if !self.path.is_empty() {
+            self.tree
+                .path_expectations
+                .push((self.path.clone(), self.expectation));
+        }
+        // Start new path
+        Self {
+            tree: self.tree,
+            path: path.iter().map(|s| s.to_string()).collect(),
+            expectation: NodeExpectation::new(),
+        }
+    }
+
+    /// Finish building and return the TreeExpectation
+    pub fn build(mut self) -> TreeExpectation {
+        // Store final path expectations
+        if !self.path.is_empty() {
+            self.tree
+                .path_expectations
+                .push((self.path, self.expectation));
+        }
+        self.tree
     }
 }
 
@@ -583,5 +762,98 @@ mod tests {
             .build();
 
         assert!(node.san.is_some());
+    }
+
+    // ========================================================================
+    // Path-based API tests
+    // ========================================================================
+
+    #[test]
+    fn test_path_based_simple() {
+        let exp = TreeExpectation::new()
+            .line(&["e4", "e5", "Nf3"])
+            .at(&["e4"]).nag(Nag::GOOD_MOVE)
+            .build();
+
+        assert_eq!(
+            exp.expected_main_line,
+            Some(vec!["e4".to_string(), "e5".to_string(), "Nf3".to_string()])
+        );
+        assert_eq!(exp.path_expectations.len(), 1);
+        assert_eq!(exp.path_expectations[0].0, vec!["e4".to_string()]);
+    }
+
+    #[test]
+    fn test_path_based_multiple_paths() {
+        let exp = TreeExpectation::new()
+            .line(&["e4", "e5", "Nf3", "Nc6"])
+            .at(&["e4"]).nag(Nag::GOOD_MOVE).comment_contains("Opening")
+            .at(&["e4", "e5"]).nag(Nag::POOR_MOVE)
+            .at(&["e4", "e5", "Nf3"]).has_comment()
+            .build();
+
+        assert_eq!(exp.path_expectations.len(), 3);
+        assert_eq!(exp.path_expectations[0].0, vec!["e4".to_string()]);
+        assert_eq!(
+            exp.path_expectations[1].0,
+            vec!["e4".to_string(), "e5".to_string()]
+        );
+        assert_eq!(
+            exp.path_expectations[2].0,
+            vec!["e4".to_string(), "e5".to_string(), "Nf3".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_path_based_with_children() {
+        let exp = TreeExpectation::new()
+            .line(&["e4", "e5"])
+            .at(&["e4"]).children(&["e5", "c5", "d5"]).has_variations()
+            .build();
+
+        assert_eq!(exp.path_expectations.len(), 1);
+        let (path, node_exp) = &exp.path_expectations[0];
+        assert_eq!(path, &vec!["e4".to_string()]);
+        assert_eq!(node_exp.children.len(), 3);
+        assert!(node_exp.must_have_variations == Some(true));
+    }
+
+    #[test]
+    fn test_path_based_replaces_closure_style() {
+        // Old closure style:
+        // .root("e4", |n| n
+        //     .nag(Nag::GOOD_MOVE)
+        //     .child("e5", |n| n
+        //         .nag(Nag::POOR_MOVE)
+        //         .child("Nf3", |n| n.has_comment())
+        //     )
+        // )
+        //
+        // New path style:
+        let exp = TreeExpectation::new()
+            .line(&["e4", "e5", "Nf3"])
+            .at(&["e4"]).nag(Nag::GOOD_MOVE)
+            .at(&["e4", "e5"]).nag(Nag::POOR_MOVE)
+            .at(&["e4", "e5", "Nf3"]).has_comment()
+            .build();
+
+        // Much cleaner! No pyramid of doom.
+        assert_eq!(exp.path_expectations.len(), 3);
+    }
+
+    #[test]
+    fn test_path_based_variations() {
+        // Old style:
+        // .variation("e5", |n| n)
+        // .variation("d5", |n| n)
+        // .variation("Nf6", |n| n)
+        //
+        // New style:
+        let exp = TreeExpectation::new()
+            .at(&["e4"]).children(&["e5", "c5", "d5", "e6", "Nf6"])
+            .build();
+
+        assert_eq!(exp.path_expectations.len(), 1);
+        assert_eq!(exp.path_expectations[0].1.children.len(), 5);
     }
 }

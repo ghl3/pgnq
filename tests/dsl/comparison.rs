@@ -142,11 +142,37 @@ pub fn tree_contains(actual: &GameTree, expected: &TreeExpectation) -> CompareRe
         check_child_expectation(&actual.root, child_exp, "root", &mut diffs);
     }
 
+    // Check path-based expectations
+    for (path, expectation) in &expected.path_expectations {
+        let path_str = format!("root -> {}", path.join(" -> "));
+        match navigate_to_path(&actual.root, path) {
+            Some(node) => {
+                check_node_expectation(node, expectation, &path_str, &mut diffs);
+            }
+            None => {
+                diffs.push(Difference::new(
+                    &path_str,
+                    "path to exist",
+                    "path not found",
+                ));
+            }
+        }
+    }
+
     if diffs.is_empty() {
         CompareResult::Match
     } else {
         CompareResult::Mismatch(diffs)
     }
+}
+
+/// Navigate to a node at the given path
+fn navigate_to_path<'a>(root: &'a GameNode, path: &[String]) -> Option<&'a GameNode> {
+    let mut current = root;
+    for san in path {
+        current = current.find_child(san)?;
+    }
+    Some(current)
 }
 
 /// Compare trees for exact equality

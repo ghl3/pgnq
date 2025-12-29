@@ -62,5 +62,7 @@ pub mod matcher;
 
 // Re-export main types
 pub use comparison::{tree_contains, trees_equal, CompareResult, Difference};
-pub use expectation::{ChildExpectation, MainLineBuilder, NodeExpectation, TreeExpectation};
+pub use expectation::{
+    ChildExpectation, MainLineBuilder, NodeExpectation, PathBuilder, TreeExpectation,
+};
 pub use matcher::{CountMatcher, NagMatcher, StringMatcher};
