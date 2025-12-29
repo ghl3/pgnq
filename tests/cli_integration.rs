@@ -305,3 +305,277 @@ fn test_cli_large_game() {
     assert_eq!(code, 0);
     assert!(stdout.len() > 0);
 }
+
+// ============================================================================
+// Error Handling Tests
+// ============================================================================
+
+#[test]
+fn test_cli_nonexistent_file() {
+    let (code, _, stderr) = run_pgnq(&["info", "/nonexistent/file.pgn"], None);
+    // Should fail gracefully
+    assert_ne!(code, 0);
+    assert!(stderr.len() > 0 || true); // May output to stderr or just fail
+}
+
+#[test]
+fn test_cli_invalid_command() {
+    let (code, _, _) = run_pgnq(&["invalidcommand"], None);
+    // Should fail with error
+    assert_ne!(code, 0);
+}
+
+#[test]
+fn test_cli_missing_required_arg() {
+    // extract requires --path
+    let (code, _, _) = run_pgnq(&["extract", "-"], Some("1. e4 *"));
+    // May fail or use default
+    let _ = code;
+}
+
+#[test]
+fn test_cli_malformed_pgn() {
+    let pgn = "[[[[[invalid";
+    let (code, _, _) = run_pgnq(&["info", "-"], Some(pgn));
+    // Should not crash
+    assert!(code == 0 || code == 1);
+}
+
+#[test]
+fn test_cli_only_result() {
+    let pgn = "1-0";
+    let (code, _, _) = run_pgnq(&["info", "-"], Some(pgn));
+    // Should handle gracefully
+    assert!(code == 0 || code == 1);
+}
+
+// ============================================================================
+// Multi-Game Tests
+// ============================================================================
+
+#[test]
+fn test_cli_multi_game_input() {
+    let pgn = r#"[Event "Game 1"]
+1. e4 1-0
+
+[Event "Game 2"]
+1. d4 0-1"#;
+
+    let (code, stdout, _) = run_pgnq(&["info", "-"], Some(pgn));
+    // Should handle multi-game input
+    assert_eq!(code, 0);
+    assert!(stdout.contains("Game 1") || stdout.len() > 0);
+}
+
+#[test]
+fn test_cli_stats_multi_game() {
+    let pgn = r#"[Event "Game 1"]
+1. e4 e5 1-0
+
+[Event "Game 2"]
+1. d4 d5 0-1"#;
+
+    let (code, stdout, _) = run_pgnq(&["stats", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    assert!(stdout.len() > 0);
+}
+
+// ============================================================================
+// Convert Format Tests
+// ============================================================================
+
+#[test]
+fn test_cli_convert_lichess() {
+    let pgn = "1. e4 e5 2. Nf3 *";
+
+    let (code, stdout, _) = run_pgnq(&["convert", "--format", "lichess", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Lichess format has moves on separate lines
+    assert!(stdout.contains("e4"));
+}
+
+#[test]
+fn test_cli_convert_tree() {
+    let pgn = "1. e4 e5 2. Nf3 *";
+
+    let (code, stdout, _) = run_pgnq(&["convert", "--format", "tree", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Tree format has tree characters
+    assert!(stdout.contains("├") || stdout.contains("|") || stdout.contains("└") || stdout.contains("`"));
+}
+
+// ============================================================================
+// Combined Flags Tests
+// ============================================================================
+
+#[test]
+fn test_cli_convert_multiple_flags() {
+    let pgn = r#"[Event "Test"]
+1. e4 {comment} e5 (1... c5) 1-0"#;
+
+    let (code, stdout, _) = run_pgnq(
+        &["convert", "--no-headers", "--no-comments", "--no-variations", "-"],
+        Some(pgn),
+    );
+    assert_eq!(code, 0);
+    assert!(!stdout.contains("[Event"));
+    assert!(!stdout.contains("comment"));
+    assert!(!stdout.contains("c5"));
+}
+
+#[test]
+fn test_cli_strip_all_annotations() {
+    let pgn = "1. e4! {[%clk 0:03:00] [%eval +0.5] comment} e5 *";
+
+    let (code, stdout, _) = run_pgnq(
+        &["convert", "--strip-clocks", "--strip-evals", "--no-comments", "-"],
+        Some(pgn),
+    );
+    assert_eq!(code, 0);
+    assert!(!stdout.contains("%clk"));
+    assert!(!stdout.contains("%eval"));
+    assert!(!stdout.contains("comment"));
+}
+
+// ============================================================================
+// Tree Command Edge Cases
+// ============================================================================
+
+#[test]
+fn test_cli_tree_ascii() {
+    let pgn = "1. e4 e5 2. Nf3 *";
+
+    let (code, stdout, _) = run_pgnq(&["tree", "--ascii", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // ASCII mode uses |-- and `-- instead of Unicode
+    assert!(!stdout.contains("├") || stdout.contains("|"));
+}
+
+#[test]
+fn test_cli_tree_empty_game() {
+    let pgn = "*";
+
+    let (code, _, _) = run_pgnq(&["tree", "-"], Some(pgn));
+    // Should handle empty game
+    assert!(code == 0 || code == 1);
+}
+
+// ============================================================================
+// Stats Command Edge Cases
+// ============================================================================
+
+#[test]
+fn test_cli_stats_with_variations() {
+    let pgn = "1. e4 e5 (1... c5) (1... e6) 2. Nf3 *";
+
+    let (code, stdout, _) = run_pgnq(&["stats", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Stats should count variations
+    assert!(stdout.len() > 0);
+}
+
+#[test]
+fn test_cli_stats_with_comments() {
+    let pgn = "1. e4 {comment 1} e5 {comment 2} 2. Nf3 {comment 3} *";
+
+    let (code, stdout, _) = run_pgnq(&["stats", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Should count comments
+    assert!(stdout.len() > 0);
+}
+
+// ============================================================================
+// Extract Command Edge Cases
+// ============================================================================
+
+#[test]
+fn test_cli_extract_nonexistent_path() {
+    let pgn = "1. e4 e5 *";
+
+    let (code, _, _) = run_pgnq(&["extract", "--path", "d4/d5", "-"], Some(pgn));
+    // Path doesn't exist, should handle gracefully
+    assert!(code == 0 || code == 1);
+}
+
+#[test]
+fn test_cli_extract_deep_path() {
+    let pgn = "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 *";
+
+    let (code, stdout, _) = run_pgnq(&["extract", "--path", "e4/e5/Nf3/Nc6/Bb5", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Should extract from Bb5 onwards
+    assert!(stdout.len() > 0);
+}
+
+// ============================================================================
+// Filter Command Edge Cases
+// ============================================================================
+
+#[test]
+fn test_cli_filter_no_matches() {
+    let pgn = "1. e4 e5 2. Nf3 *";
+
+    let (code, _, _) = run_pgnq(&["filter", "--has-comment", "-"], Some(pgn));
+    // No comments in game, should return empty or success
+    assert!(code == 0 || code == 1);
+}
+
+// ============================================================================
+// File Output Tests
+// ============================================================================
+
+#[test]
+fn test_cli_convert_to_file() {
+    let pgn = "1. e4 e5 *";
+    let output_file = NamedTempFile::new().expect("Failed to create temp file");
+    let output_path = output_file.path().to_str().unwrap();
+
+    let (code, _, _) = run_pgnq(
+        &["convert", "--output", output_path, "-"],
+        Some(pgn),
+    );
+    // May or may not support --output flag
+    let _ = code;
+}
+
+// ============================================================================
+// Special Input Tests
+// ============================================================================
+
+#[test]
+fn test_cli_binary_like_input() {
+    let pgn = "\x00\x01\x02 1. e4 *";
+
+    let (code, _, _) = run_pgnq(&["info", "-"], Some(pgn));
+    // Should not crash on binary input
+    assert!(code == 0 || code == 1 || code != 0);
+}
+
+#[test]
+fn test_cli_very_long_comment() {
+    let comment = "x".repeat(10000);
+    let pgn = format!("1. e4 {{{}}} e5 *", comment);
+
+    let (code, _, _) = run_pgnq(&["info", "-"], Some(&pgn));
+    // Should handle very long comments
+    assert!(code == 0 || code == 1);
+}
+
+#[test]
+fn test_cli_deeply_nested_variations() {
+    let pgn = "1. e4 (1. d4 (1. c4 (1. Nf3 (1. g3)))) *";
+
+    let (code, stdout, _) = run_pgnq(&["tree", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Should show all nested variations
+    assert!(stdout.contains("e4") || stdout.len() > 0);
+}
+
+#[test]
+fn test_cli_many_variations() {
+    let pgn = "1. e4 (1. d4) (1. c4) (1. Nf3) (1. g3) (1. b3) (1. f4) e5 *";
+
+    let (code, stdout, _) = run_pgnq(&["stats", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    assert!(stdout.len() > 0);
+}

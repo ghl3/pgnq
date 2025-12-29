@@ -158,6 +158,10 @@ pub struct SevenTagRoster {
 mod tests {
     use super::*;
 
+    // ========================================================================
+    // GameResult Tests
+    // ========================================================================
+
     #[test]
     fn test_game_result_parse() {
         assert_eq!(GameResult::parse("1-0"), Some(GameResult::WhiteWins));
@@ -165,6 +169,64 @@ mod tests {
         assert_eq!(GameResult::parse("1/2-1/2"), Some(GameResult::Draw));
         assert_eq!(GameResult::parse("*"), Some(GameResult::Ongoing));
         assert_eq!(GameResult::parse("invalid"), None);
+    }
+
+    #[test]
+    fn test_game_result_parse_with_whitespace() {
+        assert_eq!(GameResult::parse("  1-0  "), Some(GameResult::WhiteWins));
+        assert_eq!(GameResult::parse("\n*\n"), Some(GameResult::Ongoing));
+    }
+
+    #[test]
+    fn test_game_result_as_str() {
+        assert_eq!(GameResult::WhiteWins.as_str(), "1-0");
+        assert_eq!(GameResult::BlackWins.as_str(), "0-1");
+        assert_eq!(GameResult::Draw.as_str(), "1/2-1/2");
+        assert_eq!(GameResult::Ongoing.as_str(), "*");
+    }
+
+    #[test]
+    fn test_game_result_display() {
+        assert_eq!(format!("{}", GameResult::WhiteWins), "1-0");
+        assert_eq!(format!("{}", GameResult::BlackWins), "0-1");
+        assert_eq!(format!("{}", GameResult::Draw), "1/2-1/2");
+        assert_eq!(format!("{}", GameResult::Ongoing), "*");
+    }
+
+    #[test]
+    fn test_game_result_default() {
+        assert_eq!(GameResult::default(), GameResult::Ongoing);
+    }
+
+    #[test]
+    fn test_game_result_equality() {
+        assert_eq!(GameResult::WhiteWins, GameResult::WhiteWins);
+        assert_ne!(GameResult::WhiteWins, GameResult::BlackWins);
+    }
+
+    #[test]
+    fn test_game_result_clone() {
+        let result = GameResult::Draw;
+        let cloned = result.clone();
+        assert_eq!(result, cloned);
+    }
+
+    // ========================================================================
+    // GameTree Basic Tests
+    // ========================================================================
+
+    #[test]
+    fn test_game_tree_new() {
+        let tree = GameTree::new();
+        assert!(tree.root.is_root());
+        assert!(tree.headers.is_empty());
+        assert_eq!(tree.result, GameResult::Ongoing);
+    }
+
+    #[test]
+    fn test_game_tree_default() {
+        let tree = GameTree::default();
+        assert!(tree.root.is_root());
     }
 
     #[test]
@@ -179,6 +241,26 @@ mod tests {
     }
 
     #[test]
+    fn test_game_tree_header_overwrite() {
+        let mut tree = GameTree::new();
+        tree.set_header("Event", "First");
+        tree.set_header("Event", "Second");
+
+        assert_eq!(tree.header("Event"), Some("Second"));
+    }
+
+    #[test]
+    fn test_game_tree_header_into_conversion() {
+        let mut tree = GameTree::new();
+        tree.set_header(String::from("Event"), String::from("Test"));
+        assert_eq!(tree.header("Event"), Some("Test"));
+    }
+
+    // ========================================================================
+    // Seven Tag Roster Tests
+    // ========================================================================
+
+    #[test]
     fn test_seven_tag_roster() {
         let mut tree = GameTree::new();
         tree.set_header("Event", "World Championship");
@@ -190,5 +272,213 @@ mod tests {
         assert_eq!(str.white, "Carlsen");
         assert_eq!(str.black, "?"); // Default
         assert_eq!(str.result, "1-0");
+    }
+
+    #[test]
+    fn test_seven_tag_roster_defaults() {
+        let tree = GameTree::new();
+        let str = tree.seven_tag_roster();
+
+        assert_eq!(str.event, "?");
+        assert_eq!(str.site, "?");
+        assert_eq!(str.date, "????.??.??");
+        assert_eq!(str.round, "?");
+        assert_eq!(str.white, "?");
+        assert_eq!(str.black, "?");
+        assert_eq!(str.result, "*");
+    }
+
+    #[test]
+    fn test_seven_tag_roster_complete() {
+        let mut tree = GameTree::new();
+        tree.set_header("Event", "Test Event");
+        tree.set_header("Site", "Test Site");
+        tree.set_header("Date", "2024.01.15");
+        tree.set_header("Round", "1");
+        tree.set_header("White", "Alice");
+        tree.set_header("Black", "Bob");
+        tree.result = GameResult::Draw;
+
+        let str = tree.seven_tag_roster();
+        assert_eq!(str.event, "Test Event");
+        assert_eq!(str.site, "Test Site");
+        assert_eq!(str.date, "2024.01.15");
+        assert_eq!(str.round, "1");
+        assert_eq!(str.white, "Alice");
+        assert_eq!(str.black, "Bob");
+        assert_eq!(str.result, "1/2-1/2");
+    }
+
+    // ========================================================================
+    // Find Path Tests
+    // ========================================================================
+
+    #[test]
+    fn test_find_path() {
+        let mut tree = GameTree::new();
+        let e4 = tree.root.add_child(GameNode::new("e4"));
+        let e5 = e4.add_child(GameNode::new("e5"));
+        e5.add_child(GameNode::new("Nf3"));
+
+        let result = tree.find_path(&["e4", "e5", "Nf3"]);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().san, "Nf3");
+    }
+
+    #[test]
+    fn test_find_path_empty() {
+        let tree = GameTree::new();
+        let result = tree.find_path(&[]);
+        assert!(result.is_some());
+        assert!(result.unwrap().is_root());
+    }
+
+    #[test]
+    fn test_find_path_nonexistent() {
+        let tree = GameTree::new();
+        let result = tree.find_path(&["e4"]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_path_mut() {
+        let mut tree = GameTree::new();
+        let e4 = tree.root.add_child(GameNode::new("e4"));
+        e4.add_child(GameNode::new("e5"));
+
+        let e5 = tree.find_path_mut(&["e4", "e5"]).unwrap();
+        e5.comment = "Modified".to_string();
+
+        assert_eq!(tree.find_path(&["e4", "e5"]).unwrap().comment, "Modified");
+    }
+
+    // ========================================================================
+    // Counting Tests
+    // ========================================================================
+
+    #[test]
+    fn test_count_nodes() {
+        let mut tree = GameTree::new();
+        let e4 = tree.root.add_child(GameNode::new("e4"));
+        e4.add_child(GameNode::new("e5"));
+
+        // Excludes root
+        assert_eq!(tree.count_nodes(), 2);
+    }
+
+    #[test]
+    fn test_count_nodes_empty() {
+        let tree = GameTree::new();
+        assert_eq!(tree.count_nodes(), 0);
+    }
+
+    #[test]
+    fn test_count_lines() {
+        let mut tree = GameTree::new();
+        let e4 = tree.root.add_child(GameNode::new("e4"));
+        e4.add_child(GameNode::new("e5"));
+        e4.add_child(GameNode::new("c5"));
+        tree.root.add_child(GameNode::new("d4"));
+
+        // 3 leaf nodes = 3 lines
+        assert_eq!(tree.count_lines(), 3);
+    }
+
+    #[test]
+    fn test_count_lines_empty() {
+        let tree = GameTree::new();
+        assert_eq!(tree.count_lines(), 0);
+    }
+
+    #[test]
+    fn test_count_lines_single() {
+        let mut tree = GameTree::new();
+        let e4 = tree.root.add_child(GameNode::new("e4"));
+        let e5 = e4.add_child(GameNode::new("e5"));
+        e5.add_child(GameNode::new("Nf3"));
+
+        assert_eq!(tree.count_lines(), 1);
+    }
+
+    #[test]
+    fn test_count_comments() {
+        let mut tree = GameTree::new();
+        let e4 = tree.root.add_child(GameNode::new("e4"));
+        e4.comment = "Opening".to_string();
+        let e5 = e4.add_child(GameNode::new("e5"));
+        e5.comment = "Reply".to_string();
+
+        assert_eq!(tree.count_comments(), 2);
+    }
+
+    #[test]
+    fn test_count_comments_empty() {
+        let tree = GameTree::new();
+        assert_eq!(tree.count_comments(), 0);
+    }
+
+    // ========================================================================
+    // Depth Tests
+    // ========================================================================
+
+    #[test]
+    fn test_max_depth() {
+        let mut tree = GameTree::new();
+        let e4 = tree.root.add_child(GameNode::new("e4"));
+        let e5 = e4.add_child(GameNode::new("e5"));
+        e5.add_child(GameNode::new("Nf3"));
+
+        assert_eq!(tree.max_depth(), 3);
+    }
+
+    #[test]
+    fn test_max_depth_empty() {
+        let tree = GameTree::new();
+        assert_eq!(tree.max_depth(), 0);
+    }
+
+    #[test]
+    fn test_main_line_length() {
+        let mut tree = GameTree::new();
+        let e4 = tree.root.add_child(GameNode::new("e4"));
+        let e5 = e4.add_child(GameNode::new("e5"));
+        e5.add_child(GameNode::new("Nf3"));
+
+        assert_eq!(tree.main_line_length(), 3);
+    }
+
+    #[test]
+    fn test_main_line_length_empty() {
+        let tree = GameTree::new();
+        assert_eq!(tree.main_line_length(), 0);
+    }
+
+    // ========================================================================
+    // Clone Tests
+    // ========================================================================
+
+    #[test]
+    fn test_game_tree_clone() {
+        let mut tree = GameTree::new();
+        tree.set_header("Event", "Test");
+        tree.result = GameResult::WhiteWins;
+        tree.root.add_child(GameNode::new("e4"));
+
+        let cloned = tree.clone();
+        assert_eq!(cloned.header("Event"), Some("Test"));
+        assert_eq!(cloned.result, GameResult::WhiteWins);
+        assert_eq!(cloned.root.children.len(), 1);
+    }
+
+    #[test]
+    fn test_game_tree_clone_independence() {
+        let mut tree = GameTree::new();
+        tree.set_header("Event", "Original");
+
+        let mut cloned = tree.clone();
+        cloned.set_header("Event", "Modified");
+
+        assert_eq!(tree.header("Event"), Some("Original"));
+        assert_eq!(cloned.header("Event"), Some("Modified"));
     }
 }

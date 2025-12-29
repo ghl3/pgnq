@@ -269,6 +269,11 @@ fn normalize_san(san: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nag::Nag;
+
+    // ========================================================================
+    // Root Node Tests
+    // ========================================================================
 
     #[test]
     fn test_root_node() {
@@ -276,6 +281,31 @@ mod tests {
         assert!(root.is_root());
         assert!(root.san.is_empty());
     }
+
+    #[test]
+    fn test_root_default() {
+        let root = GameNode::default();
+        assert!(root.is_root());
+    }
+
+    #[test]
+    fn test_non_root_node() {
+        let node = GameNode::new("e4");
+        assert!(!node.is_root());
+        assert_eq!(node.san, "e4");
+    }
+
+    #[test]
+    fn test_node_with_move_number_not_root() {
+        let mut node = GameNode::new("");
+        node.move_number = Some(1);
+        // Empty san but with move number - not root
+        assert!(!node.is_root());
+    }
+
+    // ========================================================================
+    // Move Text Tests
+    // ========================================================================
 
     #[test]
     fn test_move_text() {
@@ -290,6 +320,40 @@ mod tests {
     }
 
     #[test]
+    fn test_move_text_no_move_number() {
+        let node = GameNode::new("Nf3");
+        assert_eq!(node.move_text(), "Nf3");
+    }
+
+    #[test]
+    fn test_move_text_empty_san() {
+        let root = GameNode::root();
+        assert_eq!(root.move_text(), "");
+    }
+
+    #[test]
+    fn test_move_text_high_move_number() {
+        let mut node = GameNode::new("Kf1");
+        node.move_number = Some(100);
+        node.is_black = false;
+        assert_eq!(node.move_text(), "100. Kf1");
+    }
+
+    #[test]
+    fn test_move_text_castling() {
+        let mut node = GameNode::new("O-O");
+        node.move_number = Some(5);
+        assert_eq!(node.move_text(), "5. O-O");
+
+        node.san = "O-O-O".to_string();
+        assert_eq!(node.move_text(), "5. O-O-O");
+    }
+
+    // ========================================================================
+    // Find Child Tests
+    // ========================================================================
+
+    #[test]
     fn test_find_child() {
         let mut root = GameNode::root();
         root.add_child(GameNode::new("e4"));
@@ -301,12 +365,166 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_san() {
-        assert_eq!(normalize_san("1. e4"), "e4");
-        assert_eq!(normalize_san("1...e5"), "e5");
-        assert_eq!(normalize_san("Nf3"), "Nf3");
-        assert_eq!(normalize_san("O-O"), "O-O");
+    fn test_find_child_with_move_number() {
+        let mut root = GameNode::root();
+        root.add_child(GameNode::new("e4"));
+
+        // Should normalize and find
+        assert!(root.find_child("1. e4").is_some());
+        assert!(root.find_child("e4").is_some());
     }
+
+    #[test]
+    fn test_find_child_mut() {
+        let mut root = GameNode::root();
+        root.add_child(GameNode::new("e4"));
+
+        let e4 = root.find_child_mut("e4").unwrap();
+        e4.comment = "Test comment".to_string();
+
+        assert_eq!(root.find_child("e4").unwrap().comment, "Test comment");
+    }
+
+    #[test]
+    fn test_find_child_empty_children() {
+        let root = GameNode::root();
+        assert!(root.find_child("e4").is_none());
+    }
+
+    // ========================================================================
+    // Find Path Tests
+    // ========================================================================
+
+    #[test]
+    fn test_find_path() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        let e5 = e4.add_child(GameNode::new("e5"));
+        e5.add_child(GameNode::new("Nf3"));
+
+        let result = root.find_path(&["e4", "e5", "Nf3"]);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().san, "Nf3");
+    }
+
+    #[test]
+    fn test_find_path_empty() {
+        let root = GameNode::root();
+        let result = root.find_path(&[]);
+        assert!(result.is_some());
+        assert!(result.unwrap().is_root());
+    }
+
+    #[test]
+    fn test_find_path_nonexistent() {
+        let mut root = GameNode::root();
+        root.add_child(GameNode::new("e4"));
+
+        let result = root.find_path(&["d4"]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_path_partial_match() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        e4.add_child(GameNode::new("e5"));
+
+        let result = root.find_path(&["e4", "e5", "Nf3"]);
+        assert!(result.is_none()); // Nf3 doesn't exist
+    }
+
+    #[test]
+    fn test_find_path_mut() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        e4.add_child(GameNode::new("e5"));
+
+        let e5 = root.find_path_mut(&["e4", "e5"]).unwrap();
+        e5.comment = "Modified".to_string();
+
+        assert_eq!(root.find_path(&["e4", "e5"]).unwrap().comment, "Modified");
+    }
+
+    // ========================================================================
+    // Main Line and Variations Tests
+    // ========================================================================
+
+    #[test]
+    fn test_main_line() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        e4.add_child(GameNode::new("e5"));
+        e4.add_child(GameNode::new("c5"));
+
+        let main = e4.main_line();
+        assert!(main.is_some());
+        assert_eq!(main.unwrap().san, "e5");
+    }
+
+    #[test]
+    fn test_main_line_empty() {
+        let root = GameNode::root();
+        assert!(root.main_line().is_none());
+    }
+
+    #[test]
+    fn test_variations() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        e4.add_child(GameNode::new("e5"));
+        e4.add_child(GameNode::new("c5"));
+        e4.add_child(GameNode::new("e6"));
+
+        let vars = e4.variations();
+        assert_eq!(vars.len(), 2);
+        assert_eq!(vars[0].san, "c5");
+        assert_eq!(vars[1].san, "e6");
+    }
+
+    #[test]
+    fn test_variations_single_child() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        e4.add_child(GameNode::new("e5"));
+
+        assert!(e4.variations().is_empty());
+    }
+
+    #[test]
+    fn test_has_variations() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        e4.add_child(GameNode::new("e5"));
+
+        assert!(!e4.has_variations());
+
+        e4.add_child(GameNode::new("c5"));
+        assert!(e4.has_variations());
+    }
+
+    #[test]
+    fn test_has_children() {
+        let mut root = GameNode::root();
+        assert!(!root.has_children());
+
+        root.add_child(GameNode::new("e4"));
+        assert!(root.has_children());
+    }
+
+    #[test]
+    fn test_is_leaf() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+
+        assert!(e4.is_leaf());
+        e4.add_child(GameNode::new("e5"));
+        assert!(!e4.is_leaf());
+    }
+
+    // ========================================================================
+    // Counting Tests
+    // ========================================================================
 
     #[test]
     fn test_count_nodes() {
@@ -317,5 +535,247 @@ mod tests {
 
         // root + e4 + e5 + d4 = 4
         assert_eq!(root.count_nodes(), 4);
+    }
+
+    #[test]
+    fn test_count_nodes_empty() {
+        let root = GameNode::root();
+        assert_eq!(root.count_nodes(), 1); // Just root
+    }
+
+    #[test]
+    fn test_count_nodes_deep_tree() {
+        let mut root = GameNode::root();
+        let mut current = &mut root;
+        for _ in 0..10 {
+            current = current.add_child(GameNode::new("e4"));
+        }
+        assert_eq!(root.count_nodes(), 11); // root + 10 children
+    }
+
+    #[test]
+    fn test_count_leaves() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        e4.add_child(GameNode::new("e5"));
+        e4.add_child(GameNode::new("c5"));
+        root.add_child(GameNode::new("d4"));
+
+        // e5, c5, d4 are leaves
+        assert_eq!(root.count_leaves(), 3);
+    }
+
+    #[test]
+    fn test_count_leaves_single_line() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        let e5 = e4.add_child(GameNode::new("e5"));
+        e5.add_child(GameNode::new("Nf3"));
+
+        assert_eq!(root.count_leaves(), 1);
+    }
+
+    #[test]
+    fn test_count_comments() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        e4.comment = "Opening move".to_string();
+        let e5 = e4.add_child(GameNode::new("e5"));
+        e5.comment = "Reply".to_string();
+        e4.add_child(GameNode::new("c5")); // No comment
+
+        assert_eq!(root.count_comments(), 2);
+    }
+
+    #[test]
+    fn test_count_comments_none() {
+        let mut root = GameNode::root();
+        root.add_child(GameNode::new("e4"));
+        assert_eq!(root.count_comments(), 0);
+    }
+
+    // ========================================================================
+    // Depth Tests
+    // ========================================================================
+
+    #[test]
+    fn test_max_depth() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        let e5 = e4.add_child(GameNode::new("e5"));
+        let nf3 = e5.add_child(GameNode::new("Nf3"));
+        nf3.add_child(GameNode::new("Nc6"));
+
+        assert_eq!(root.max_depth(), 4);
+    }
+
+    #[test]
+    fn test_max_depth_with_variations() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        let e5 = e4.add_child(GameNode::new("e5"));
+        e5.add_child(GameNode::new("Nf3"));
+        // Shorter variation
+        e4.add_child(GameNode::new("c5"));
+
+        // Main line is deeper (4 vs 3)
+        assert_eq!(root.max_depth(), 3);
+    }
+
+    #[test]
+    fn test_max_depth_empty() {
+        let root = GameNode::root();
+        assert_eq!(root.max_depth(), 0);
+    }
+
+    #[test]
+    fn test_main_line_length() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        let e5 = e4.add_child(GameNode::new("e5"));
+        e5.add_child(GameNode::new("Nf3"));
+
+        assert_eq!(root.main_line_length(), 3);
+    }
+
+    #[test]
+    fn test_main_line_length_with_variations() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        let e5 = e4.add_child(GameNode::new("e5"));
+        e5.add_child(GameNode::new("Nf3"));
+        // Variation doesn't affect main line length
+        e4.add_child(GameNode::new("c5"));
+
+        assert_eq!(root.main_line_length(), 3);
+    }
+
+    // ========================================================================
+    // Normalize SAN Tests
+    // ========================================================================
+
+    #[test]
+    fn test_normalize_san() {
+        assert_eq!(normalize_san("1. e4"), "e4");
+        assert_eq!(normalize_san("1...e5"), "e5");
+        assert_eq!(normalize_san("Nf3"), "Nf3");
+        assert_eq!(normalize_san("O-O"), "O-O");
+    }
+
+    #[test]
+    fn test_normalize_san_high_move_number() {
+        assert_eq!(normalize_san("100. Kf1"), "Kf1");
+        assert_eq!(normalize_san("50...Kf8"), "Kf8");
+    }
+
+    #[test]
+    fn test_normalize_san_with_check() {
+        assert_eq!(normalize_san("15. Qxf7+"), "Qxf7+");
+        assert_eq!(normalize_san("20. Qxf7#"), "Qxf7#");
+    }
+
+    #[test]
+    fn test_normalize_san_promotion() {
+        assert_eq!(normalize_san("8. e8=Q+"), "e8=Q+");
+    }
+
+    #[test]
+    fn test_normalize_san_whitespace() {
+        assert_eq!(normalize_san("  e4  "), "e4");
+        assert_eq!(normalize_san("  1. e4  "), "e4");
+    }
+
+    // ========================================================================
+    // Add Child Tests
+    // ========================================================================
+
+    #[test]
+    fn test_add_child() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        e4.comment = "Test".to_string();
+
+        assert_eq!(root.children.len(), 1);
+        assert_eq!(root.children[0].comment, "Test");
+    }
+
+    #[test]
+    fn test_add_multiple_children() {
+        let mut root = GameNode::root();
+        root.add_child(GameNode::new("e4"));
+        root.add_child(GameNode::new("d4"));
+        root.add_child(GameNode::new("c4"));
+
+        assert_eq!(root.children.len(), 3);
+        assert_eq!(root.children[0].san, "e4");
+        assert_eq!(root.children[1].san, "d4");
+        assert_eq!(root.children[2].san, "c4");
+    }
+
+    // ========================================================================
+    // Deep Clone Tests
+    // ========================================================================
+
+    #[test]
+    fn test_deep_clone() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        e4.comment = "Opening".to_string();
+        e4.add_child(GameNode::new("e5"));
+        e4.add_child(GameNode::new("c5"));
+
+        let clone = root.deep_clone();
+
+        assert_eq!(clone.children.len(), 1);
+        assert_eq!(clone.children[0].san, "e4");
+        assert_eq!(clone.children[0].comment, "Opening");
+        assert_eq!(clone.children[0].children.len(), 2);
+    }
+
+    #[test]
+    fn test_deep_clone_independence() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        e4.comment = "Original".to_string();
+
+        let mut clone = root.deep_clone();
+        clone.children[0].comment = "Modified".to_string();
+
+        // Original unchanged
+        assert_eq!(root.children[0].comment, "Original");
+        assert_eq!(clone.children[0].comment, "Modified");
+    }
+
+    #[test]
+    fn test_deep_clone_empty() {
+        let root = GameNode::root();
+        let clone = root.deep_clone();
+        assert!(clone.is_root());
+        assert!(clone.children.is_empty());
+    }
+
+    // ========================================================================
+    // NAG Tests
+    // ========================================================================
+
+    #[test]
+    fn test_node_with_nags() {
+        let mut node = GameNode::new("e4");
+        node.nags.push(Nag(1)); // Good move
+        node.nags.push(Nag(14)); // White has slight advantage
+
+        assert_eq!(node.nags.len(), 2);
+        assert_eq!(node.nags[0], Nag(1));
+    }
+
+    #[test]
+    fn test_deep_clone_preserves_nags() {
+        let mut root = GameNode::root();
+        let e4 = root.add_child(GameNode::new("e4"));
+        e4.nags.push(Nag(1));
+
+        let clone = root.deep_clone();
+        assert_eq!(clone.children[0].nags.len(), 1);
+        assert_eq!(clone.children[0].nags[0], Nag(1));
     }
 }
