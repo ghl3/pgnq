@@ -4,7 +4,7 @@ A Unix-like command-line tool for querying and manipulating chess PGN files.
 
 `pgnq` parses PGN (Portable Game Notation) files into tree structures, enabling powerful filtering, splitting, and transformation operations. Think of it as `jq` for chess games.
 
-**Flexible parsing**: Works with PGN exports from Lichess, Chess.com, ChessBase, and other sources. Handles brace comments, semicolon comments, bare text annotations, clock times, evaluations, and nested variations—no strict format enforcement.
+Handles single games, multi-game databases, and opening repertoires with complex variation trees. Works with PGN exports from Lichess, Chess.com, ChessBase, and other sources—brace comments, semicolon comments, bare text annotations, clock times, evaluations, and arbitrarily nested variations are all supported without strict format enforcement.
 
 ## Commands
 
