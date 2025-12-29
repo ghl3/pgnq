@@ -4,6 +4,79 @@ A Unix-like command-line tool for querying and manipulating chess PGN files.
 
 `pgnq` parses PGN (Portable Game Notation) files into tree structures, enabling powerful filtering, splitting, and transformation operations. Think of it as `jq` for chess games.
 
+**Flexible parsing**: Works with PGN exports from Lichess, Chess.com, ChessBase, and other sources. Handles brace comments, semicolon comments, bare text annotations, clock times, evaluations, and nested variations—no strict format enforcement.
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `info` | Display file metadata and statistics |
+| `tree` | Visualize the game tree |
+| `stats` | Detailed statistics in JSON format |
+| `convert` | Transform between PGN formats |
+| `extract` | Extract a subtree at a specific path |
+| `split` | Split into multiple files at node paths |
+| `filter` | Filter nodes by criteria |
+| `merge` | Combine multiple files into one tree |
+
+## Examples
+
+### Opening Repertoire Management
+
+```bash
+# Merge separate opening files into one repertoire
+pgnq merge sicilian.pgn french.pgn caro_kann.pgn -o black_vs_e4.pgn
+
+# Split a study into chapter files
+pgnq split repertoire.pgn \
+  -s "e4/e5/Nf3/Nc6/Bb5:ruy_lopez" \
+  -s "e4/e5/Nf3/Nc6/Bc4:italian" \
+  -s "e4/c5:sicilian" \
+  -o openings/
+
+# Count lines in each opening
+for f in openings/*.pgn; do
+  echo "$f: $(pgnq stats "$f" --json | jq '.leaf_nodes') lines"
+done
+
+# Build a complete repertoire from multiple sources
+pgnq merge openings/*.pgn | pgnq convert -F lichess -o complete_repertoire.pgn
+```
+
+### Clean Up Annotated Games
+
+```bash
+# Remove engine analysis, keep human comments
+pgnq convert annotated.pgn --strip-evals --strip-clocks -o clean.pgn
+
+# Create minimal PGN for sharing
+pgnq convert game.pgn --no-variations --no-comments -F minimal
+```
+
+### Analyze Study Structure
+
+```bash
+# Find all heavily annotated positions
+pgnq filter study.pgn --has-comment --has-nag "!" | pgnq tree
+
+# Get statistics on variation depth
+pgnq stats study.pgn --json | jq '{
+  total: .total_nodes,
+  mainline: .main_line_length,
+  avg_depth: (.total_nodes / .leaf_nodes)
+}'
+```
+
+### Convert Between Platforms
+
+```bash
+# Lichess study to standard PGN
+pgnq convert lichess_export.pgn -F standard -o chessbase.pgn
+
+# Standard PGN to Lichess format
+cat chessbase.pgn | pgnq convert -F lichess > lichess_import.pgn
+```
+
 ## Installation
 
 ```bash
@@ -13,93 +86,33 @@ cargo install pgnq
 Or build from source:
 
 ```bash
-git clone https://github.com/yourusername/pgnq
+git clone https://github.com/ghl3/pgnq
 cd pgnq
 cargo build --release
 ```
 
-## Quick Start
+## Command Reference
 
-```bash
-# View info about a PGN file
-pgnq info game.pgn
+### Path Syntax
 
-# Display the move tree
-pgnq tree game.pgn
-
-# Convert between formats
-cat lichess_study.pgn | pgnq convert -F standard
-
-# Extract a specific variation
-pgnq extract game.pgn -p "e4/e5/Nf3/Nc6"
-
-# Split a study into separate files
-pgnq split study.pgn -s "e4/c5:sicilian" -s "e4/e5:open_game"
-
-# Merge multiple PGN files into one
-pgnq merge white_e4.pgn white_d4.pgn -o repertoire.pgn
-```
-
-## Concepts
-
-### The Game Tree
-
-PGN files represent chess games as trees, not linear sequences. The main line is the primary sequence of moves, but variations (alternative moves) branch off at any point:
-
-```
-1. e4
-├── 1... e5 (main line)
-│   ├── 2. Nf3
-│   │   └── 2... Nc6
-│   └── 2. Bc4 (variation)
-│       └── 2... Nf6
-└── 1... c5 (variation: Sicilian)
-    └── 2. Nf3
-```
-
-`pgnq` preserves this tree structure, allowing you to navigate, filter, and extract any part of it.
-
-### Node Paths
-
-Node paths specify locations in the game tree using a slash-separated syntax:
+Several commands (`extract`, `split`, `filter`) use node paths to specify locations in the game tree:
 
 ```
 e4/e5/Nf3/Nc6          # Sequence of moves from root
 e4/c5:1                # First variation after e4 (Sicilian)
 e4/e5/Nf3:v2           # Second variation at Nf3
-1.e4/1...e5/2.Nf3      # With move numbers (optional)
+1.e4/1...e5/2.Nf3      # With move numbers (optional, ignored for matching)
 ```
 
-**Path Syntax:**
+**Syntax:**
 - `/` separates moves in the path
 - `:N` or `:vN` selects the Nth variation (0 = main line)
-- Move numbers are optional and ignored for matching
 
 **Special Selectors:**
 - `@root` - the root node
 - `@end` - follow main line to the end
 - `/**` - all descendants (glob)
 - `/*` - direct children only
-
-### Flexible PGN Parsing
-
-`pgnq` uses a **liberal parser** that handles virtually any reasonable PGN:
-
-| Feature | Supported Syntax |
-|---------|------------------|
-| **Brace comments** | `{ this is a comment }` |
-| **Semicolon comments** | `; comment to end of line` |
-| **Bare text comments** | Lines that don't look like moves become comments |
-| **Mixed comments** | All styles can appear in the same file |
-| **Variations** | `( )` parentheses, arbitrarily nested |
-| **Headerless games** | Moves without the Seven Tag Roster |
-| **Clock times** | `[%clk 1:30:00]` embedded in comments |
-| **Evaluations** | `[%eval +0.45]` or `[%eval #3]` |
-| **NAGs** | `$1`, `$2`, or symbols like `!`, `?`, `!!`, `??` |
-
-**Philosophy**: If it looks like reasonable PGN, `pgnq` will parse it. No strict format enforcement.
-
-## Commands
 
 ### `pgnq info`
 
@@ -109,6 +122,7 @@ Display information about a PGN file.
 pgnq info game.pgn
 pgnq info game.pgn --json
 pgnq info game.pgn --headers-only
+pgnq info tournament.pgn --game 5    # Select specific game (1-indexed)
 ```
 
 **Output:**
@@ -162,8 +176,7 @@ Show detailed statistics about a PGN file.
 ```bash
 pgnq stats game.pgn
 pgnq stats game.pgn --json
-pgnq stats game.pgn --move-stats   # Move frequency
-pgnq stats game.pgn --comment-stats # Comment analysis
+pgnq stats tournament.pgn --all --json  # Process all games
 ```
 
 **JSON Output:**
@@ -201,8 +214,8 @@ pgnq convert game.pgn --no-variations
 pgnq convert game.pgn --no-nags
 pgnq convert game.pgn --no-headers
 
-# Combine options
-pgnq convert game.pgn -F standard --no-comments --strip-clocks
+# Select specific game from multi-game file
+pgnq convert tournament.pgn --game 3 -o game3.pgn
 ```
 
 **Options:**
@@ -210,6 +223,7 @@ pgnq convert game.pgn -F standard --no-comments --strip-clocks
 |------|-------------|
 | `-F, --format` | Output format: `standard`, `lichess`, `minimal` |
 | `-o, --output` | Output file (default: stdout) |
+| `--game N` | Select specific game (1-indexed) |
 | `--no-headers` | Omit PGN headers |
 | `--no-comments` | Strip all comments |
 | `--no-variations` | Keep main line only |
@@ -236,6 +250,8 @@ pgnq extract game.pgn -p "e4/c5:1" -o sicilian.pgn
 | `-F, --format` | Output format |
 | `--with-prefix` | Include moves from root to extraction point |
 | `--with-headers` | Include headers from original file |
+
+Exit code 2 if path not found.
 
 ### `pgnq split`
 
@@ -358,26 +374,9 @@ Or as a tree:
 │       └── 2. Nf3
 ```
 
-## Piping and Composition
-
-`pgnq` is designed for Unix pipelines:
-
-```bash
-# Chain operations
-cat game.pgn | pgnq convert -F standard | pgnq filter --main-line
-
-# Process multiple files
-for f in *.pgn; do pgnq stats "$f" --json; done | jq -s '.'
-
-# Extract and convert in one pipeline
-pgnq extract study.pgn -p "e4/c5" | pgnq convert -F lichess > sicilian.pgn
-
-# Use with other tools
-pgnq tree game.pgn | head -20
-pgnq stats game.pgn --json | jq '.total_nodes'
-```
-
 ## PGN Format Reference
+
+`pgnq` uses a liberal parser designed to handle virtually any reasonable PGN. If it looks like chess notation, it will probably work—no strict format enforcement.
 
 ### Headers (Tag Pairs)
 
@@ -456,87 +455,57 @@ Embedded in comments using `[%command value]` syntax:
 | `%emt` | `h:mm:ss` | Elapsed move time |
 | `%eval` | `+0.00` or `#N` | Position evaluation |
 
-## Multi-Game Files
+## Piping and Composition
 
-PGN files can contain multiple games, separated by blank lines. Use `--game N` to select a specific game (1-indexed), or process all games:
+`pgnq` is designed for Unix pipelines:
 
 ```bash
-# Info on specific game
-pgnq info tournament.pgn --game 5
+# Chain operations
+cat game.pgn | pgnq convert -F standard | pgnq filter --main-line
 
-# Process all games
-pgnq stats tournament.pgn --all --json
+# Process multiple files
+for f in *.pgn; do pgnq stats "$f" --json; done | jq -s '.'
 
-# Extract game 3
-pgnq convert tournament.pgn --game 3 -o game3.pgn
+# Extract and convert in one pipeline
+pgnq extract study.pgn -p "e4/c5" | pgnq convert -F lichess > sicilian.pgn
+
+# Use with other tools
+pgnq tree game.pgn | head -20
+pgnq stats game.pgn --json | jq '.total_nodes'
 ```
 
-## Exit Codes
+## More Examples
 
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | Parse error |
-| 2 | Path not found |
-| 3 | Invalid arguments |
-| 4 | I/O error |
-
-## Examples
-
-### Opening Repertoire Management
+### Complex Pipeline Operations
 
 ```bash
-# Merge separate opening files into one repertoire
-pgnq merge sicilian.pgn french.pgn caro_kann.pgn -o black_vs_e4.pgn
+# Extract all annotated lines from multiple studies
+for f in studies/*.pgn; do
+  pgnq filter "$f" --has-comment | pgnq convert -F minimal
+done > annotated_lines.pgn
 
-# Split a study into chapter files
-pgnq split repertoire.pgn \
-  -s "e4/e5/Nf3/Nc6/Bb5:ruy_lopez" \
-  -s "e4/e5/Nf3/Nc6/Bc4:italian" \
-  -s "e4/c5:sicilian" \
-  -o openings/
+# Find the deepest variations across a repertoire
+pgnq merge repertoire/*.pgn | pgnq stats --json | jq '.max_depth'
 
-# Count lines in each opening
-for f in openings/*.pgn; do
-  echo "$f: $(pgnq stats "$f" --json | jq '.leaf_nodes') lines"
+# Create a clean export stripping all engine analysis
+pgnq convert study.pgn --strip-clocks --strip-evals --no-nags \
+  | pgnq filter --has-comment \
+  > human_annotations_only.pgn
+
+# Split a large database and get stats on each part
+pgnq split database.pgn -s "e4:e4_games" -s "d4:d4_games" -o parts/
+for f in parts/*.pgn; do
+  echo "=== $f ==="
+  pgnq stats "$f" --json | jq '{nodes: .total_nodes, lines: .leaf_nodes}'
 done
 
-# Build a complete repertoire from multiple sources
-pgnq merge openings/*.pgn | pgnq convert -F lichess -o complete_repertoire.pgn
-```
+# Merge overlapping repertoires, preferring comments from the first
+pgnq merge primary_repertoire.pgn secondary_repertoire.pgn -o combined.pgn
 
-### Clean Up Annotated Games
-
-```bash
-# Remove engine analysis, keep human comments
-pgnq convert annotated.pgn --strip-evals --strip-clocks -o clean.pgn
-
-# Create minimal PGN for sharing
-pgnq convert game.pgn --no-variations --no-comments -F minimal
-```
-
-### Analyze Study Structure
-
-```bash
-# Find all heavily annotated positions
-pgnq filter study.pgn --has-comment --has-nag "!" | pgnq tree
-
-# Get statistics on variation depth
-pgnq stats study.pgn --json | jq '{
-  total: .total_nodes,
-  mainline: .main_line_length,
-  avg_depth: (.total_nodes / .leaf_nodes)
-}'
-```
-
-### Convert Between Platforms
-
-```bash
-# Lichess study to standard PGN
-pgnq convert lichess_export.pgn -F standard -o chessbase.pgn
-
-# Standard PGN to Lichess format
-cat chessbase.pgn | pgnq convert -F lichess > lichess_import.pgn
+# Convert an entire directory to Lichess format
+for f in *.pgn; do
+  pgnq convert "$f" -F lichess -o "lichess_${f}"
+done
 ```
 
 ## License
