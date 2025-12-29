@@ -7,7 +7,9 @@ use crate::serializer::{to_pgn, OutputOptions};
 use crate::tree::{GameNode, GameTree, NodePath};
 use anyhow::Result;
 use clap::Args;
+use std::fs;
 use std::io::{self, Write};
+use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct FilterArgs {
@@ -15,17 +17,21 @@ pub struct FilterArgs {
     #[arg(value_name = "FILE", default_value = "-")]
     pub input: InputSource,
 
+    /// Output file (default: stdout)
+    #[arg(short = 'o', long)]
+    pub output: Option<PathBuf>,
+
     /// Path pattern to match
     #[arg(short = 'p', long)]
     pub path: Option<String>,
 
     /// Filter nodes with comments
-    #[arg(long)]
-    pub has_comment: bool,
+    #[arg(long, visible_alias = "has-comment")]
+    pub commented: bool,
 
-    /// Filter nodes with specific NAG
-    #[arg(long)]
-    pub has_nag: Option<String>,
+    /// Filter nodes with specific NAG annotation (e.g., "!" or "$1")
+    #[arg(long, visible_alias = "has-nag")]
+    pub nag: Option<String>,
 
     /// Minimum tree depth
     #[arg(long)]
@@ -56,21 +62,18 @@ pub fn run(args: FilterArgs, _quiet: bool) -> Result<()> {
     let content = args.input.read_to_string()?;
     let tree = parse(&content)?;
 
-    // If --main-line is specified, just output the main line
-    if args.main_line {
+    // Build the output string based on filter mode
+    let output_string = if args.main_line {
+        // If --main-line is specified, just output the main line
         let options = OutputOptions {
             format: args.format.into(),
             variations: false,
             result: true,
             ..Default::default()
         };
-        let output = to_pgn(&tree, &options);
-        io::stdout().write_all(output.as_bytes())?;
-        return Ok(());
-    }
-
-    // If a path is specified, filter to that subtree
-    if let Some(path_str) = &args.path {
+        to_pgn(&tree, &options)
+    } else if let Some(path_str) = &args.path {
+        // If a path is specified, filter to that subtree
         let path = NodePath::parse(path_str)?;
         let nodes = path.resolve_all(&tree);
 
@@ -78,47 +81,58 @@ pub fn run(args: FilterArgs, _quiet: bool) -> Result<()> {
             anyhow::bail!("No nodes match path: {}", path_str);
         }
 
-        // Create a new tree with matching nodes
-        // For now, just take the first match and output it
-        if let Some(node) = nodes.first() {
+        // Output all matching nodes as separate games
+        let options = OutputOptions {
+            format: args.format.into(),
+            headers: true,
+            result: true,
+            ..Default::default()
+        };
+
+        let mut result = String::new();
+        for (i, node) in nodes.iter().enumerate() {
             let mut subtree = GameTree::new();
             subtree.root = (*node).deep_clone();
             subtree.headers = tree.headers.clone();
             subtree.result = tree.result.clone();
 
-            let options = OutputOptions {
-                format: args.format.into(),
-                headers: true,
-                result: true,
-                ..Default::default()
-            };
-            let output = to_pgn(&subtree, &options);
-            io::stdout().write_all(output.as_bytes())?;
+            result.push_str(&to_pgn(&subtree, &options));
+
+            // Add blank line between multiple games
+            if i < nodes.len() - 1 {
+                result.push('\n');
+            }
         }
-        return Ok(());
-    }
+        result
+    } else {
+        // Filter by criteria
+        let nag_filter = args.nag.as_ref().and_then(|s| {
+            Nag::from_symbol(s).or_else(|| Nag::from_dollar_notation(s))
+        });
 
-    // Filter by criteria
-    let nag_filter = args.has_nag.as_ref().and_then(|s| {
-        Nag::from_symbol(s).or_else(|| Nag::from_dollar_notation(s))
-    });
+        // Build a filtered tree
+        let mut filtered = GameTree::new();
+        filtered.headers = tree.headers.clone();
+        filtered.result = tree.result.clone();
 
-    // Build a filtered tree
-    let mut filtered = GameTree::new();
-    filtered.headers = tree.headers.clone();
-    filtered.result = tree.result.clone();
+        // Clone the tree but only include matching nodes
+        filter_node(&tree.root, &mut filtered.root, &args, nag_filter, 0);
 
-    // Clone the tree but only include matching nodes
-    filter_node(&tree.root, &mut filtered.root, &args, nag_filter, 0);
-
-    let options = OutputOptions {
-        format: args.format.into(),
-        headers: true,
-        result: true,
-        ..Default::default()
+        let options = OutputOptions {
+            format: args.format.into(),
+            headers: true,
+            result: true,
+            ..Default::default()
+        };
+        to_pgn(&filtered, &options)
     };
-    let output = to_pgn(&filtered, &options);
-    io::stdout().write_all(output.as_bytes())?;
+
+    // Write output
+    if let Some(path) = args.output {
+        fs::write(&path, &output_string)?;
+    } else {
+        io::stdout().write_all(output_string.as_bytes())?;
+    }
 
     Ok(())
 }
@@ -165,12 +179,12 @@ fn node_matches(node: &GameNode, args: &FilterArgs, nag_filter: Option<Nag>, dep
         }
     }
 
-    // Check has_comment
-    if args.has_comment && node.comment.is_empty() {
+    // Check commented
+    if args.commented && node.comment.is_empty() {
         return false;
     }
 
-    // Check has_nag
+    // Check nag
     if let Some(nag) = nag_filter {
         if !node.nags.contains(&nag) {
             return false;

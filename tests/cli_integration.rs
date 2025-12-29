@@ -507,6 +507,25 @@ fn test_cli_extract_deep_path() {
     assert!(stdout.len() > 0);
 }
 
+#[test]
+fn test_cli_extract_with_prefix() {
+    let pgn = "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 *";
+
+    // Without prefix - should start at Nf3
+    let (code, stdout, _) = run_pgnq(&["extract", "--path", "e4/e5/Nf3", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    assert!(!stdout.contains("1. e4"));
+    assert!(stdout.contains("Nf3"));
+
+    // With prefix - should include e4, e5 leading up to Nf3
+    let (code, stdout, _) =
+        run_pgnq(&["extract", "--path", "e4/e5/Nf3", "--with-prefix", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    assert!(stdout.contains("1. e4"));
+    assert!(stdout.contains("e5"));
+    assert!(stdout.contains("Nf3"));
+}
+
 // ============================================================================
 // Filter Command Edge Cases
 // ============================================================================

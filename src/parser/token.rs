@@ -15,10 +15,12 @@ pub enum Token {
     MoveNumber(String),
 
     /// Castling moves (must be before Move to have higher priority)
-    #[regex(r"O-O-O[+#]?", |lex| lex.slice().to_string(), priority = 9)]
+    /// Accepts both O-O-O (standard) and 0-0-0 (common variant with zeros)
+    #[regex(r"[O0]-[O0]-[O0][+#]?", |lex| normalize_castling(lex.slice()), priority = 9)]
     CastleLong(String),
 
-    #[regex(r"O-O[+#]?", |lex| lex.slice().to_string(), priority = 9)]
+    /// Accepts both O-O (standard) and 0-0 (common variant with zeros)
+    #[regex(r"[O0]-[O0][+#]?", |lex| normalize_castling(lex.slice()), priority = 9)]
     CastleShort(String),
 
     /// Chess move in SAN notation - piece moves
@@ -202,6 +204,19 @@ impl Token {
     }
 }
 
+/// Normalize castling notation: convert 0-0 (zeros) to O-O (letters)
+/// This ensures consistent output regardless of input format
+fn normalize_castling(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '0' => result.push('O'),
+            _ => result.push(c),
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,5 +259,44 @@ mod tests {
         let tokens = tokenize("e4 (d4 d5) e5");
         assert!(tokens.iter().any(|t| matches!(t, Token::VariationStart)));
         assert!(tokens.iter().any(|t| matches!(t, Token::VariationEnd)));
+    }
+
+    #[test]
+    fn test_castling_with_zeros() {
+        // Test that 0-0 (zeros) is normalized to O-O (letters)
+        let tokens = tokenize("e4 e5 0-0");
+        assert!(tokens.iter().any(|t| matches!(t, Token::CastleShort(s) if s == "O-O")));
+
+        let tokens = tokenize("d4 d5 0-0-0");
+        assert!(tokens.iter().any(|t| matches!(t, Token::CastleLong(s) if s == "O-O-O")));
+    }
+
+    #[test]
+    fn test_castling_with_zeros_and_check() {
+        let tokens = tokenize("0-0+");
+        assert!(tokens.iter().any(|t| matches!(t, Token::CastleShort(s) if s == "O-O+")));
+
+        let tokens = tokenize("0-0-0#");
+        assert!(tokens.iter().any(|t| matches!(t, Token::CastleLong(s) if s == "O-O-O#")));
+    }
+
+    #[test]
+    fn test_castling_standard_notation() {
+        // Ensure standard O-O notation still works
+        let tokens = tokenize("O-O O-O-O");
+        let moves: Vec<_> = tokens.iter().filter(|t| t.is_move()).collect();
+        assert_eq!(moves.len(), 2);
+        assert!(matches!(moves[0], Token::CastleShort(s) if s == "O-O"));
+        assert!(matches!(moves[1], Token::CastleLong(s) if s == "O-O-O"));
+    }
+
+    #[test]
+    fn test_normalize_castling() {
+        assert_eq!(normalize_castling("0-0"), "O-O");
+        assert_eq!(normalize_castling("0-0-0"), "O-O-O");
+        assert_eq!(normalize_castling("O-O"), "O-O");
+        assert_eq!(normalize_castling("O-O-O"), "O-O-O");
+        assert_eq!(normalize_castling("0-0+"), "O-O+");
+        assert_eq!(normalize_castling("0-0-0#"), "O-O-O#");
     }
 }

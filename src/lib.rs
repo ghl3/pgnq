@@ -12,5 +12,5 @@ pub mod tree;
 
 pub use error::{Error, Result};
 pub use nag::Nag;
-pub use parser::parse;
+pub use parser::{parse, parse_all};
 pub use tree::{GameNode, GameResult, GameTree};

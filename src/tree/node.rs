@@ -259,19 +259,27 @@ impl GameNode {
 }
 
 /// Navigate to a node by path (immutable)
+/// Uses bounds-checked access to avoid panics on invalid paths.
 fn get_node_by_path<'a>(root: &'a GameNode, path: &[usize]) -> &'a GameNode {
     let mut current = root;
     for &idx in path {
-        current = &current.children[idx];
+        current = current
+            .children
+            .get(idx)
+            .expect("Internal error: invalid path index in deep_clone");
     }
     current
 }
 
 /// Navigate to a node by path (mutable)
+/// Uses bounds-checked access to avoid panics on invalid paths.
 fn get_node_mut_by_path<'a>(root: &'a mut GameNode, path: &[usize]) -> &'a mut GameNode {
     let mut current = root;
     for &idx in path {
-        current = &mut current.children[idx];
+        current = current
+            .children
+            .get_mut(idx)
+            .expect("Internal error: invalid path index in deep_clone");
     }
     current
 }
