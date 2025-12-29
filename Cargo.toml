@@ -2,8 +2,10 @@
 name = "pgnq"
 version = "0.1.0"
 edition = "2021"
+authors = ["George Lewis"]
 description = "A Unix-like CLI tool for querying and manipulating chess PGN files"
 license = "MIT"
+repository = "https://github.com/ghl3/pgnq"
 keywords = ["chess", "pgn", "parser", "cli"]
 categories = ["command-line-utilities", "parser-implementations"]
 
