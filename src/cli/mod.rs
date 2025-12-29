@@ -48,6 +48,9 @@ pub enum Command {
 
     /// Filter nodes matching specific criteria
     Filter(commands::FilterArgs),
+
+    /// Merge multiple PGN files into a unified tree
+    Merge(commands::MergeArgs),
 }
 
 /// Input source - either a file path or stdin
@@ -124,5 +127,6 @@ pub fn run() -> Result<()> {
         Command::Extract(args) => commands::extract::run(args, cli.quiet),
         Command::Split(args) => commands::split::run(args, cli.quiet),
         Command::Filter(args) => commands::filter::run(args, cli.quiet),
+        Command::Merge(args) => commands::merge::run(args, cli.quiet),
     }
 }
