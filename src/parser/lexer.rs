@@ -140,65 +140,54 @@ fn post_process_tokens(tokens: &mut Vec<Token>) {
     // is NOT a real variation but a textual reference
     collapse_embedded_variations(tokens);
 
-    // In Lichess format, bare text lines that don't look like moves are comments
-    // We detect this by checking if bare text appears after a move and before the next move
+    // Second: convert moves that appear inside prose to baretext
+    // A move is "inside prose" if it directly follows a BareText token
+    convert_prose_moves(tokens);
+}
 
+/// Convert move tokens that appear inside prose to baretext.
+/// A move is "inside prose" if:
+/// 1. It directly follows a BareText token, OR
+/// 2. It follows a MoveNumber that follows BareText (e.g., "...but 6.Be3 is common")
+///
+/// This handles cases like "the pawn on f3 is weak" where f3 is
+/// incorrectly tokenized as a move but is actually part of the prose.
+fn convert_prose_moves(tokens: &mut Vec<Token>) {
+    // First pass: mark move numbers that are in prose context
+    let mut prose_move_numbers: Vec<usize> = Vec::new();
+    for i in 0..tokens.len() {
+        if matches!(&tokens[i], Token::MoveNumber(_)) && i > 0 {
+            if matches!(&tokens[i - 1], Token::BareText(_)) {
+                prose_move_numbers.push(i);
+            }
+        }
+    }
+
+    // Second pass: convert moves that follow baretext or prose move numbers
     let mut i = 0;
     while i < tokens.len() {
-        if let Token::BareText(text) = &tokens[i] {
-            let trimmed = text.trim();
+        if tokens[i].is_move() && i > 0 {
+            let in_prose = matches!(&tokens[i - 1], Token::BareText(_))
+                || (matches!(&tokens[i - 1], Token::MoveNumber(_))
+                    && prose_move_numbers.contains(&(i - 1)));
 
-            // Check if this looks like a move line we missed
-            if looks_like_move_line(trimmed) {
-                // Try to extract moves from it
-                let sub_tokens: Vec<Token> = Token::lexer(trimmed)
-                    .filter_map(|r| r.ok())
-                    .collect();
-
-                if !sub_tokens.is_empty()
-                    && sub_tokens.iter().any(|t| t.is_move())
-                {
-                    // Replace bare text with extracted tokens
-                    tokens.splice(i..=i, sub_tokens);
-                    continue;
+            if in_prose {
+                if let Some(san) = tokens[i].as_move() {
+                    tokens[i] = Token::BareText(san.to_string());
                 }
             }
-
-            // It's a genuine comment - convert it to a brace comment internally
-            // (This unifies handling in the builder)
         }
         i += 1;
     }
-}
 
-/// Check if text looks like it contains chess moves
-fn looks_like_move_line(text: &str) -> bool {
-    // Quick heuristics for move-like text
-    let text = text.trim();
-
-    // Check for move number patterns
-    if text.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
-        return true;
-    }
-
-    // Check for piece letters at start
-    if text.starts_with(['K', 'Q', 'R', 'B', 'N', 'O']) {
-        return true;
-    }
-
-    // Check for pawn move patterns (a-h followed by digit or x)
-    if let Some(first) = text.chars().next() {
-        if ('a'..='h').contains(&first) {
-            if let Some(second) = text.chars().nth(1) {
-                if second.is_ascii_digit() || second == 'x' {
-                    return true;
-                }
-            }
+    // Third pass: convert prose move numbers to baretext
+    for &idx in prose_move_numbers.iter().rev() {
+        if let Token::MoveNumber(s) = &tokens[idx] {
+            tokens[idx] = Token::BareText(s.clone());
         }
     }
-
-    false
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -253,12 +242,28 @@ mod tests {
     }
 
     #[test]
-    fn test_looks_like_move_line() {
-        assert!(looks_like_move_line("1. e4"));
-        assert!(looks_like_move_line("Nf3"));
-        assert!(looks_like_move_line("e4"));
-        assert!(looks_like_move_line("O-O"));
-        assert!(!looks_like_move_line("This is a comment"));
-        assert!(!looks_like_move_line("The knight moves here"));
+    fn test_convert_prose_moves() {
+        // "the pawn on f3" - f3 should be converted to baretext
+        let tokens = tokenize("the pawn on f3 is weak");
+        let moves: Vec<_> = tokens.iter().filter(|t| t.is_move()).collect();
+        assert_eq!(moves.len(), 0, "f3 in prose should not be a move");
+
+        // "1. e4" - e4 should remain a move
+        let tokens = tokenize("1. e4");
+        let moves: Vec<_> = tokens.iter().filter(|t| t.is_move()).collect();
+        assert_eq!(moves.len(), 1, "e4 after move number should be a move");
+    }
+
+    #[test]
+    fn test_move_number_in_prose() {
+        // "6.Be3 is common" - both move number and move are prose references
+        let tokens = tokenize("but 6.Be3 is the most common continuation");
+        let moves: Vec<_> = tokens.iter().filter(|t| t.is_move()).collect();
+        assert_eq!(moves.len(), 0, "6.Be3 in prose should not be a move");
+
+        // But actual move line should work
+        let tokens = tokenize("1. e4\n6. Be3");
+        let moves: Vec<_> = tokens.iter().filter(|t| t.is_move()).collect();
+        assert_eq!(moves.len(), 2, "both e4 and Be3 should be moves");
     }
 }

@@ -188,4 +188,62 @@ The knight develops to the rim.
         assert_eq!(tree.count_nodes(), count);
         assert_eq!(tree.count_nodes(), count);
     }
+
+    // ========================================================================
+    // Prose-Embedded Move Detection Tests
+    // ========================================================================
+
+    #[test]
+    fn test_baretext_move_reference_not_parsed_as_move() {
+        let pgn = "1. e4 e5\nThe pawn on f3 is weak.\n2. Nf3 *";
+        let tree = parse(pgn).unwrap();
+        // Should have 3 moves: e4, e5, Nf3
+        // "f3" in prose should NOT create a move node
+        assert_eq!(
+            tree.count_nodes(),
+            3,
+            "Expected 3 nodes (e4, e5, Nf3), got {}",
+            tree.count_nodes()
+        );
+    }
+
+    #[test]
+    fn test_move_on_own_line_is_parsed() {
+        let pgn = "1. e4\nGreat opening!\ne5\n2. Nf3 *";
+        let tree = parse(pgn).unwrap();
+        // e5 on its own line should be parsed as a move
+        assert_eq!(
+            tree.count_nodes(),
+            3,
+            "Expected 3 nodes (e4, e5, Nf3), got {}",
+            tree.count_nodes()
+        );
+    }
+
+    #[test]
+    fn test_multiple_embedded_moves_in_prose() {
+        let pgn = "1. e4 e5\nWhite can play Be2 or Nf3 here.\n2. Nf3 *";
+        let tree = parse(pgn).unwrap();
+        // "Be2 or Nf3" in prose should NOT create move nodes
+        // Only real moves: e4, e5, Nf3
+        assert_eq!(
+            tree.count_nodes(),
+            3,
+            "Expected 3 nodes (e4, e5, Nf3), got {}",
+            tree.count_nodes()
+        );
+    }
+
+    #[test]
+    fn test_piece_name_in_prose_not_parsed_as_move() {
+        let pgn = "1. e4 e5\nThe Knight is a tricky piece.\n2. Nf3 *";
+        let tree = parse(pgn).unwrap();
+        // "Knight" should not be parsed as a move
+        assert_eq!(
+            tree.count_nodes(),
+            3,
+            "Expected 3 nodes, got {}",
+            tree.count_nodes()
+        );
+    }
 }
