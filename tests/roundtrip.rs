@@ -623,3 +623,243 @@ fn test_triple_roundtrip_stable() {
     assert_eq!(pgn3, pgn4);
     assert!(trees_equal(&tree2, &tree3));
 }
+
+// ============================================================================
+// Comprehensive NAG Roundtrip Tests (0-255)
+// ============================================================================
+
+use pgnq::Nag;
+
+/// Test that all NAG values 0-255 roundtrip correctly through $N notation
+#[test]
+fn test_roundtrip_all_nag_values_dollar_notation() {
+    for nag_value in 0u8..=255 {
+        let pgn = format!("1. e4 ${} e5 *", nag_value);
+        let tree1 = parse(&pgn).expect(&format!("Failed to parse NAG ${}", nag_value));
+
+        let options = OutputOptions::default();
+        let serialized = to_pgn(&tree1, &options);
+        let tree2 = parse(&serialized).expect(&format!("Failed to roundtrip NAG ${}", nag_value));
+
+        let e4_1 = tree1.root.find_child("e4").unwrap();
+        let e4_2 = tree2.root.find_child("e4").unwrap();
+
+        assert_eq!(
+            e4_1.nags, e4_2.nags,
+            "NAG ${} did not roundtrip correctly. Original: {:?}, After: {:?}",
+            nag_value, e4_1.nags, e4_2.nags
+        );
+    }
+}
+
+/// Test symbolic NAGs roundtrip correctly (!, ?, !!, ??, !?, ?!)
+#[test]
+fn test_roundtrip_symbolic_nags_all() {
+    let symbolic_tests = [
+        ("1. e4! e5 *", Nag::GOOD_MOVE, "!"),
+        ("1. e4? e5 *", Nag::POOR_MOVE, "?"),
+        ("1. e4!! e5 *", Nag::BRILLIANT_MOVE, "!!"),
+        ("1. e4?? e5 *", Nag::BLUNDER, "??"),
+        ("1. e4!? e5 *", Nag::INTERESTING_MOVE, "!?"),
+        ("1. e4?! e5 *", Nag::DUBIOUS_MOVE, "?!"),
+    ];
+
+    for (pgn, expected_nag, symbol) in symbolic_tests {
+        let tree1 = parse(pgn).expect(&format!("Failed to parse {}", symbol));
+
+        let options = OutputOptions::default();
+        let serialized = to_pgn(&tree1, &options);
+        let tree2 = parse(&serialized).expect(&format!("Failed to roundtrip {}", symbol));
+
+        let e4_1 = tree1.root.find_child("e4").unwrap();
+        let e4_2 = tree2.root.find_child("e4").unwrap();
+
+        assert!(
+            e4_1.nags.contains(&expected_nag),
+            "Original should contain {} NAG", symbol
+        );
+        assert!(
+            e4_2.nags.contains(&expected_nag),
+            "Roundtrip should preserve {} NAG", symbol
+        );
+    }
+}
+
+/// Test positional evaluation NAGs roundtrip correctly
+#[test]
+fn test_roundtrip_positional_nags() {
+    let positional_tests = [
+        (Nag::EQUAL, "$10", "="),
+        (Nag::WHITE_SLIGHT_ADVANTAGE, "$14", "+="),
+        (Nag::BLACK_SLIGHT_ADVANTAGE, "$15", "=+"),
+        (Nag::WHITE_MODERATE_ADVANTAGE, "$16", "+/-"),
+        (Nag::BLACK_MODERATE_ADVANTAGE, "$17", "-/+"),
+        (Nag::WHITE_DECISIVE_ADVANTAGE, "$18", "+-"),
+        (Nag::BLACK_DECISIVE_ADVANTAGE, "$19", "-+"),
+    ];
+
+    for (expected_nag, dollar, symbol) in positional_tests {
+        let pgn = format!("1. e4 {} e5 *", dollar);
+        let tree1 = parse(&pgn).expect(&format!("Failed to parse {}", symbol));
+
+        let options = OutputOptions::default();
+        let serialized = to_pgn(&tree1, &options);
+        let tree2 = parse(&serialized).expect(&format!("Failed to roundtrip {}", symbol));
+
+        let e4_1 = tree1.root.find_child("e4").unwrap();
+        let e4_2 = tree2.root.find_child("e4").unwrap();
+
+        assert!(
+            e4_1.nags.contains(&expected_nag),
+            "Original should contain {} NAG ({})", symbol, dollar
+        );
+        assert!(
+            e4_2.nags.contains(&expected_nag),
+            "Roundtrip should preserve {} NAG ({})", symbol, dollar
+        );
+    }
+}
+
+/// Test multiple NAGs on a single move roundtrip correctly
+#[test]
+fn test_roundtrip_multiple_nags_per_move() {
+    // Move with both a move assessment and positional evaluation
+    let pgn = "1. e4! $14 e5 *";
+    let tree1 = parse(pgn).unwrap();
+
+    let options = OutputOptions::default();
+    let serialized = to_pgn(&tree1, &options);
+    let tree2 = parse(&serialized).unwrap();
+
+    let e4_1 = tree1.root.find_child("e4").unwrap();
+    let e4_2 = tree2.root.find_child("e4").unwrap();
+
+    assert_eq!(e4_1.nags.len(), 2, "Original should have 2 NAGs");
+    assert_eq!(e4_2.nags.len(), 2, "Roundtrip should preserve 2 NAGs");
+    assert!(e4_1.nags.contains(&Nag::GOOD_MOVE));
+    assert!(e4_1.nags.contains(&Nag::WHITE_SLIGHT_ADVANTAGE));
+    assert!(e4_2.nags.contains(&Nag::GOOD_MOVE));
+    assert!(e4_2.nags.contains(&Nag::WHITE_SLIGHT_ADVANTAGE));
+}
+
+/// Test NAGs on multiple moves roundtrip correctly
+#[test]
+fn test_roundtrip_nags_on_multiple_moves() {
+    let pgn = "1. e4! e5? 2. Nf3!! Nc6?? 3. Bb5!? a6?! *";
+    let tree1 = parse(pgn).unwrap();
+
+    let options = OutputOptions::default();
+    let serialized = to_pgn(&tree1, &options);
+    let tree2 = parse(&serialized).unwrap();
+
+    // Verify each move's NAGs
+    let e4_2 = tree2.root.find_child("e4").unwrap();
+    assert!(e4_2.nags.contains(&Nag::GOOD_MOVE), "e4 should have !");
+
+    let e5_2 = e4_2.find_child("e5").unwrap();
+    assert!(e5_2.nags.contains(&Nag::POOR_MOVE), "e5 should have ?");
+
+    let nf3_2 = e5_2.find_child("Nf3").unwrap();
+    assert!(nf3_2.nags.contains(&Nag::BRILLIANT_MOVE), "Nf3 should have !!");
+
+    let nc6_2 = nf3_2.find_child("Nc6").unwrap();
+    assert!(nc6_2.nags.contains(&Nag::BLUNDER), "Nc6 should have ??");
+
+    let bb5_2 = nc6_2.find_child("Bb5").unwrap();
+    assert!(bb5_2.nags.contains(&Nag::INTERESTING_MOVE), "Bb5 should have !?");
+
+    let a6_2 = bb5_2.find_child("a6").unwrap();
+    assert!(a6_2.nags.contains(&Nag::DUBIOUS_MOVE), "a6 should have ?!");
+}
+
+/// Test NAGs inside variations roundtrip correctly
+#[test]
+fn test_roundtrip_nags_in_variations() {
+    let pgn = "1. e4 e5 (1... c5! {Sicilian} 2. Nf3 $14) 2. Nf3 *";
+    let tree1 = parse(pgn).unwrap();
+
+    let options = OutputOptions::default();
+    let serialized = to_pgn(&tree1, &options);
+    let tree2 = parse(&serialized).unwrap();
+
+    // Find c5 in the variation
+    let e4 = tree2.root.find_child("e4").unwrap();
+    let c5 = e4.find_child("c5").unwrap();
+    assert!(c5.nags.contains(&Nag::GOOD_MOVE), "c5 in variation should have !");
+
+    let nf3_var = c5.find_child("Nf3").unwrap();
+    assert!(
+        nf3_var.nags.contains(&Nag::WHITE_SLIGHT_ADVANTAGE),
+        "Nf3 in variation should have $14"
+    );
+}
+
+/// Test uncommon NAG values (those without symbols) roundtrip
+#[test]
+fn test_roundtrip_uncommon_nags() {
+    // Test a selection of uncommon NAG values that don't have symbols
+    let uncommon_nags = [0, 7, 8, 9, 11, 12, 13, 20, 21, 22, 50, 100, 150, 200, 254, 255];
+
+    for &nag_value in &uncommon_nags {
+        let pgn = format!("1. e4 ${} e5 *", nag_value);
+        let tree1 = parse(&pgn).expect(&format!("Failed to parse NAG ${}", nag_value));
+
+        let options = OutputOptions::default();
+        let serialized = to_pgn(&tree1, &options);
+
+        // Verify the NAG appears in serialized output as $N
+        assert!(
+            serialized.contains(&format!("${}", nag_value)),
+            "Serialized output should contain ${}", nag_value
+        );
+
+        let tree2 = parse(&serialized).expect(&format!("Failed to roundtrip NAG ${}", nag_value));
+
+        let e4_1 = tree1.root.find_child("e4").unwrap();
+        let e4_2 = tree2.root.find_child("e4").unwrap();
+
+        assert_eq!(
+            e4_1.nags, e4_2.nags,
+            "NAG ${} did not roundtrip correctly", nag_value
+        );
+    }
+}
+
+/// Test NAG boundary values specifically
+#[test]
+fn test_roundtrip_nag_boundaries() {
+    // Test 0, 1, 254, 255 specifically as boundary values
+    let boundaries = [
+        (0, "$0"),
+        (1, "!"),      // Symbolic
+        (254, "$254"),
+        (255, "$255"),
+    ];
+
+    for (nag_value, expected_display) in boundaries {
+        let pgn = format!("1. e4 ${} e5 *", nag_value);
+        let tree1 = parse(&pgn).unwrap();
+
+        let options = OutputOptions::default();
+        let serialized = to_pgn(&tree1, &options);
+
+        // NAG 1 displays as "!" symbol, others as $N
+        if nag_value == 1 {
+            assert!(
+                serialized.contains("e4!") || serialized.contains("e4 !"),
+                "NAG 1 should serialize as ! symbol"
+            );
+        }
+
+        let tree2 = parse(&serialized).unwrap();
+
+        let e4_1 = tree1.root.find_child("e4").unwrap();
+        let e4_2 = tree2.root.find_child("e4").unwrap();
+
+        let expected_nag = Nag::new(nag_value);
+        assert!(
+            e4_2.nags.contains(&expected_nag),
+            "NAG {} ({}) should roundtrip correctly", nag_value, expected_display
+        );
+    }
+}

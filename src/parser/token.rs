@@ -84,6 +84,10 @@ pub enum Token {
     #[regex(r"=\+|⩱", priority = 6)]
     BlackSlightlyBetter,
 
+    /// Equal position symbol (standalone =)
+    #[token("=", priority = 4)]
+    Equal,
+
     /// Variation start
     #[token("(", priority = 10)]
     VariationStart,
@@ -147,6 +151,7 @@ impl Token {
                 | Token::QuestionBang(_)
                 | Token::Bang(_)
                 | Token::Question(_)
+                | Token::Equal
                 | Token::WhiteWinning
                 | Token::BlackWinning
                 | Token::WhiteBetter
@@ -193,6 +198,7 @@ impl Token {
             Token::DoubleQuestion(_) => Some(4),
             Token::BangQuestion(_) => Some(5),
             Token::QuestionBang(_) => Some(6),
+            Token::Equal => Some(10),
             Token::WhiteSlightlyBetter => Some(14),
             Token::BlackSlightlyBetter => Some(15),
             Token::WhiteBetter => Some(16),
