@@ -10,6 +10,26 @@ use crate::tree::{GameNode, GameResult, GameTree};
 /// Empty path means root node.
 type NodePath = Vec<usize>;
 
+/// Parse context state machine for distinguishing real moves from prose references.
+///
+/// This handles Lichess-style baretext comments where move-like text (e.g., "f3")
+/// can appear in prose and should not be parsed as actual chess moves.
+#[derive(Debug, Clone)]
+enum ParseContext {
+    /// After a MoveNumber, expecting up to N moves.
+    /// - After "1." expect 2 moves (White then Black)
+    /// - After "1..." expect 1 move (Black only)
+    ExpectingMoves { remaining: u8 },
+
+    /// Between moves - not currently in prose.
+    /// Moves here are real (Lichess puts continuation moves on their own lines).
+    BetweenMoves,
+
+    /// Inside prose text - move tokens should be treated as comment text.
+    /// Entered when BareText is seen, exited on Newline.
+    InProse,
+}
+
 /// Build a GameTree from a token stream
 pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
     let mut tree = GameTree::new();
@@ -20,13 +40,16 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
     let mut current_path: NodePath = Vec::new();
 
     // Stack for tracking where to return after a variation ends
-    // Each entry is (path_to_node, move_number, expect_black) to restore
-    let mut return_stack: Vec<(NodePath, u16, bool)> = Vec::new();
+    // Each entry is (path_to_node, move_number, expect_black, context) to restore
+    let mut return_stack: Vec<(NodePath, u16, bool, ParseContext)> = Vec::new();
 
     let mut pending_comment = String::new();
     let mut pending_nags: Vec<Nag> = Vec::new();
     let mut current_move_number: u16 = 1;
     let mut expect_black = false;
+
+    // State machine context for prose detection
+    let mut context = ParseContext::BetweenMoves;
 
     for token in tokens {
         match token {
@@ -42,9 +65,28 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
             }
 
             Token::MoveNumber(num_str) => {
-                if let Some(num) = parse_move_number(num_str) {
+                // If we're in prose, move numbers are references, not real markers
+                if matches!(context, ParseContext::InProse) {
+                    // Treat as comment text
+                    if current_path.is_empty() {
+                        if !pending_comment.is_empty() {
+                            pending_comment.push(' ');
+                        }
+                        pending_comment.push_str(num_str);
+                    } else {
+                        let current = get_node_mut(&mut tree.root, &current_path);
+                        if !current.comment.is_empty() {
+                            current.comment.push(' ');
+                        }
+                        current.comment.push_str(num_str);
+                    }
+                } else if let Some(num) = parse_move_number(num_str) {
                     current_move_number = num;
                     expect_black = num_str.contains("...");
+                    // Reset context: after a move number, we expect real moves
+                    context = ParseContext::ExpectingMoves {
+                        remaining: if expect_black { 1 } else { 2 },
+                    };
                 }
             }
 
@@ -52,26 +94,55 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
             | Token::PawnMove(san)
             | Token::CastleLong(san)
             | Token::CastleShort(san) => {
-                let mut node = GameNode::new(san.clone());
-                node.move_number = Some(current_move_number);
-                node.is_black = expect_black;
-
-                if !pending_comment.is_empty() {
-                    node.comment = std::mem::take(&mut pending_comment);
-                }
-                node.nags = std::mem::take(&mut pending_nags);
-
-                // Navigate to parent node and add child
-                let parent = get_node_mut(&mut tree.root, &current_path);
-                parent.children.push(node);
-                let new_child_idx = parent.children.len() - 1;
-                current_path.push(new_child_idx);
-
-                if expect_black {
-                    current_move_number += 1;
-                    expect_black = false;
+                // Check if this move is in prose context
+                if matches!(context, ParseContext::InProse) {
+                    // Treat as comment text, not a real move
+                    if current_path.is_empty() {
+                        if !pending_comment.is_empty() {
+                            pending_comment.push(' ');
+                        }
+                        pending_comment.push_str(san);
+                    } else {
+                        let current = get_node_mut(&mut tree.root, &current_path);
+                        if !current.comment.is_empty() {
+                            current.comment.push(' ');
+                        }
+                        current.comment.push_str(san);
+                    }
                 } else {
-                    expect_black = true;
+                    // Real move - add to tree
+                    let mut node = GameNode::new(san.clone());
+                    node.move_number = Some(current_move_number);
+                    node.is_black = expect_black;
+
+                    if !pending_comment.is_empty() {
+                        node.comment = std::mem::take(&mut pending_comment);
+                    }
+                    node.nags = std::mem::take(&mut pending_nags);
+
+                    // Navigate to parent node and add child
+                    let parent = get_node_mut(&mut tree.root, &current_path);
+                    parent.children.push(node);
+                    let new_child_idx = parent.children.len() - 1;
+                    current_path.push(new_child_idx);
+
+                    if expect_black {
+                        current_move_number += 1;
+                        expect_black = false;
+                    } else {
+                        expect_black = true;
+                    }
+
+                    // Update context after consuming a move
+                    if let ParseContext::ExpectingMoves { remaining } = context {
+                        context = if remaining > 1 {
+                            ParseContext::ExpectingMoves {
+                                remaining: remaining - 1,
+                            }
+                        } else {
+                            ParseContext::BetweenMoves
+                        };
+                    }
                 }
             }
 
@@ -115,6 +186,8 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
                     }
                     current.comment.push_str(text);
                 }
+                // Enter prose context - subsequent move tokens are references, not real moves
+                context = ParseContext::InProse;
             }
 
             Token::Nag(nag_str) => {
@@ -172,21 +245,25 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
                         current_path.clone(),
                         current_move_number,
                         expect_black,
+                        context.clone(),
                     ));
                     // Pop the current move to go back to its parent
                     // The variation's moves will be siblings of the current move
                     current_path.pop();
+                    // Variations start fresh - expect moves
+                    context = ParseContext::BetweenMoves;
                 }
             }
 
             Token::VariationEnd => {
                 // Restore to the position we saved at VariationStart
-                if let Some((saved_path, saved_move_num, saved_expect_black)) =
+                if let Some((saved_path, saved_move_num, saved_expect_black, saved_context)) =
                     return_stack.pop()
                 {
                     current_path = saved_path;
                     current_move_number = saved_move_num;
                     expect_black = saved_expect_black;
+                    context = saved_context;
                 }
             }
 
@@ -204,7 +281,10 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
             }
 
             Token::Newline => {
-                // Newlines are generally ignored
+                // Newlines exit prose context - a move on its own line after prose is real
+                if matches!(context, ParseContext::InProse) {
+                    context = ParseContext::BetweenMoves;
+                }
             }
         }
     }
