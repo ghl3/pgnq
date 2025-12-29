@@ -246,4 +246,259 @@ The knight develops to the rim.
             tree.count_nodes()
         );
     }
+
+    // ========================================================================
+    // State Machine Edge Case Tests
+    // ========================================================================
+
+    #[test]
+    fn test_transposition_reference_not_parsed_as_moves() {
+        // This pattern was incorrectly parsed by the old heuristic
+        let pgn = r#"1. e4 e5 2. Nf3
+Transposition to 1.d4 Nf6 2.c4 g6 3.Nc3 Bg7.
+3. Bc4 *"#;
+        let tree = parse(pgn).unwrap();
+        // Should have 4 moves: e4, e5, Nf3, Bc4
+        // The transposition reference should NOT create 6 additional nodes
+        assert_eq!(
+            tree.count_nodes(),
+            4,
+            "Expected 4 nodes, got {} (transposition parsed as moves?)",
+            tree.count_nodes()
+        );
+    }
+
+    #[test]
+    fn test_year_not_parsed_as_move_number() {
+        // Years like "2025." should not be parsed as move numbers
+        let pgn = r#"1. e4 e5
+Smith-Jones 2025. In this game White played aggressively.
+2. Nf3 *"#;
+        let tree = parse(pgn).unwrap();
+        // Should have 3 moves, not treating "2025." as a move number
+        assert_eq!(
+            tree.count_nodes(),
+            3,
+            "Expected 3 nodes, got {} (year parsed as move number?)",
+            tree.count_nodes()
+        );
+    }
+
+    #[test]
+    fn test_move_number_in_prose_not_parsed() {
+        // Move numbers mentioned in prose should stay as prose
+        let pgn = r#"1. e4 e5
+After 10. cxb5 Black has good counterplay.
+2. Nf3 *"#;
+        let tree = parse(pgn).unwrap();
+        // "10. cxb5" is prose, not a real move
+        assert_eq!(
+            tree.count_nodes(),
+            3,
+            "Expected 3 nodes, got {}",
+            tree.count_nodes()
+        );
+    }
+
+    #[test]
+    fn test_variation_after_prose_parses_correctly() {
+        // Variation starting after a prose line should parse as real moves
+        let pgn = r#"1. e4 e5
+White has several options here.
+(1. d4 d5 2. c4)
+2. Nf3 *"#;
+        let tree = parse(pgn).unwrap();
+        // Main: e4, e5, Nf3 = 3
+        // Variation: d4, d5, c4 = 3
+        // Total = 6
+        assert_eq!(
+            tree.count_nodes(),
+            6,
+            "Expected 6 nodes, got {}",
+            tree.count_nodes()
+        );
+    }
+
+    #[test]
+    fn test_prose_after_variation_filters_moves() {
+        // Prose after a variation ends should still filter move references
+        let pgn = r#"1. e4 e5 (1... c5)
+This is similar to the Sicilian with Nf3 ideas.
+2. Nf3 *"#;
+        let tree = parse(pgn).unwrap();
+        // Main: e4, e5, Nf3 = 3
+        // Variation: c5 = 1
+        // "Nf3" in prose should NOT be parsed
+        assert_eq!(
+            tree.count_nodes(),
+            4,
+            "Expected 4 nodes, got {}",
+            tree.count_nodes()
+        );
+    }
+
+    #[test]
+    fn test_context_restored_after_variation() {
+        // After exiting a variation, context should be restored properly
+        let pgn = r#"1. e4
+Opening comment with e5 reference.
+(1. d4 d5)
+Still in prose mode, Nf3 is mentioned.
+e5
+2. Nf3 *"#;
+        let tree = parse(pgn).unwrap();
+        // Main: e4, e5, Nf3 = 3
+        // Variation: d4, d5 = 2
+        // "e5" and "Nf3" in prose are NOT moves, but "e5" on own line IS
+        assert_eq!(
+            tree.count_nodes(),
+            5,
+            "Expected 5 nodes, got {}",
+            tree.count_nodes()
+        );
+    }
+
+    #[test]
+    fn test_brace_comment_does_not_enter_prose_mode() {
+        // Brace comments are explicitly delimited, shouldn't affect state
+        let pgn = "1. e4 {with e5 as reply} e5 2. Nf3 *";
+        let tree = parse(pgn).unwrap();
+        // All moves should parse normally
+        assert_eq!(tree.count_nodes(), 3);
+        let e4 = tree.root.find_child("e4").unwrap();
+        assert!(e4.comment.contains("e5"));
+    }
+
+    #[test]
+    fn test_move_sequence_in_prose_line() {
+        // Multiple moves on same line as prose = all prose
+        let pgn = r#"1. e4 e5
+The line 2.Nf3 Nc6 3.Bb5 is the Ruy Lopez.
+2. Bc4 *"#;
+        let tree = parse(pgn).unwrap();
+        // Should have 3 moves: e4, e5, Bc4
+        // "2.Nf3 Nc6 3.Bb5" is prose
+        assert_eq!(
+            tree.count_nodes(),
+            3,
+            "Expected 3 nodes, got {}",
+            tree.count_nodes()
+        );
+    }
+
+    #[test]
+    fn test_newline_resets_prose_context() {
+        // After newline, moves on own line should be real
+        let pgn = "1. e4\nThis is prose with Nf3.\ne5\nMore prose.\n2. Nf3 *";
+        let tree = parse(pgn).unwrap();
+        // e4, e5 (on own line), Nf3 (after move number) = 3 real moves
+        assert_eq!(tree.count_nodes(), 3);
+    }
+
+    #[test]
+    fn test_nested_variation_with_prose() {
+        // Nested variations should each maintain their own context
+        let pgn = r#"1. e4 e5 (1... c5
+The Sicilian with d6 ideas.
+2. Nf3 (2. Nc3 Nc6)) 2. Nf3 *"#;
+        let tree = parse(pgn).unwrap();
+        // Main: e4, e5, Nf3 = 3
+        // First var: c5, Nf3 = 2
+        // Nested var: Nc3, Nc6 = 2
+        // Total = 7
+        // "d6" in prose should not be parsed
+        assert_eq!(
+            tree.count_nodes(),
+            7,
+            "Expected 7 nodes, got {}",
+            tree.count_nodes()
+        );
+    }
+
+    #[test]
+    fn test_castling_in_prose_not_parsed() {
+        // Castling notation in prose should not be parsed as moves
+        let pgn = "1. e4 e5\nWhite should castle O-O soon.\n2. Nf3 *";
+        let tree = parse(pgn).unwrap();
+        // "O-O" in prose should NOT be a move
+        assert_eq!(
+            tree.count_nodes(),
+            3,
+            "Expected 3 nodes, got {}",
+            tree.count_nodes()
+        );
+    }
+
+    #[test]
+    fn test_long_transposition_sequence() {
+        // Real pattern from Saemisch file: long transposition reference
+        let pgn = r#"1. d4 Nf6 2. c4 g6
+(2... e6 3. Nc3 Bb4
+Transposition to 4.e4 d6 5.f3 O-O 6.Be3 c5 7.Nge2.
+)
+3. Nc3 *"#;
+        let tree = parse(pgn).unwrap();
+        // Main: d4, Nf6, c4, g6, Nc3 = 5
+        // Variation: e6, Nc3, Bb4 = 3
+        // Transposition text should NOT add nodes
+        assert_eq!(
+            tree.count_nodes(),
+            8,
+            "Expected 8 nodes, got {}",
+            tree.count_nodes()
+        );
+    }
+
+    #[test]
+    fn test_prose_with_check_notation() {
+        // Check notation in prose should not be parsed
+        let pgn = "1. e4 e5\nAfter Bb5+ the king must move.\n2. Nf3 *";
+        let tree = parse(pgn).unwrap();
+        assert_eq!(
+            tree.count_nodes(),
+            3,
+            "Expected 3 nodes, got {}",
+            tree.count_nodes()
+        );
+    }
+
+    #[test]
+    fn test_prose_with_capture_notation() {
+        // Capture notation in prose should not be parsed
+        let pgn = "1. e4 e5\nThe exchange exd5 is thematic.\n2. Nf3 *";
+        let tree = parse(pgn).unwrap();
+        assert_eq!(
+            tree.count_nodes(),
+            3,
+            "Expected 3 nodes, got {}",
+            tree.count_nodes()
+        );
+    }
+
+    #[test]
+    fn test_comment_then_move_on_same_line() {
+        // Move immediately after prose on same line = prose (no newline reset)
+        let pgn = "1. e4 e5\nGood move e5\n2. Nf3 *";
+        let tree = parse(pgn).unwrap();
+        // "e5" after "Good move" is prose, but there's already e5 from "1. e4 e5"
+        assert_eq!(tree.count_nodes(), 3);
+    }
+
+    #[test]
+    fn test_multiple_games_prose_isolation() {
+        // Prose context should not leak between games
+        let pgn = r#"[Event "Game 1"]
+1. e4 e5
+Prose about Nf3.
+*
+
+[Event "Game 2"]
+1. d4 Nf3 *"#;
+        let games = parse_all(pgn).unwrap();
+        assert_eq!(games.len(), 2);
+        // Game 1: e4, e5 = 2 (Nf3 is prose)
+        assert_eq!(games[0].count_nodes(), 2);
+        // Game 2: d4, Nf3 = 2 (Nf3 is real move after move number)
+        assert_eq!(games[1].count_nodes(), 2);
+    }
 }
