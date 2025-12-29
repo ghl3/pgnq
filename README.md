@@ -35,6 +35,9 @@ pgnq extract game.pgn -p "e4/e5/Nf3/Nc6"
 
 # Split a study into separate files
 pgnq split study.pgn -s "e4/c5:sicilian" -s "e4/e5:open_game"
+
+# Merge multiple PGN files into one
+pgnq merge white_e4.pgn white_d4.pgn -o repertoire.pgn
 ```
 
 ## Concepts
@@ -301,6 +304,60 @@ pgnq filter game.pgn --has-comment --invert
 | `--invert` | Invert the filter |
 | `-F, --format` | Output format |
 
+### `pgnq merge`
+
+Merge multiple PGN files into a single unified tree with variations.
+
+```bash
+# Merge multiple repertoire files
+pgnq merge sicilian.pgn french.pgn caro_kann.pgn -o e4_responses.pgn
+
+# Merge and view as tree
+pgnq merge file1.pgn file2.pgn -F tree
+
+# Merge with comment handling
+pgnq merge *.pgn --concat-comments -o combined.pgn
+```
+
+**How it works:**
+- Games are merged level-by-level using a BFS algorithm
+- Identical moves are combined; different moves become variations
+- First-seen move order is preserved (first file's moves = main line)
+- Headers are taken from the first input file
+- Result is set to `*` since merged trees have multiple endpoints
+
+**Options:**
+| Flag | Description |
+|------|-------------|
+| `-o, --output` | Output file (default: stdout) |
+| `-F, --format` | Output format: `standard`, `lichess`, `minimal`, `tree` |
+| `--no-comments` | Strip all comments |
+| `--no-nags` | Remove NAG annotations |
+| `--concat-comments` | Concatenate comments for duplicate moves |
+| `--line-width N` | Wrap lines at N characters (default: 80) |
+
+**Example:**
+
+Given two files:
+```
+# file1.pgn: 1. e4 e5 2. Nf3
+# file2.pgn: 1. e4 c5 2. Nf3
+```
+
+Merging produces:
+```
+1. e4 e5 (1... c5 2. Nf3) 2. Nf3
+```
+
+Or as a tree:
+```
+├── 1. e4
+│   ├── 1... e5
+│   │   └── 2. Nf3
+│   └── 1... c5
+│       └── 2. Nf3
+```
+
 ## Piping and Composition
 
 `pgnq` is designed for Unix pipelines:
@@ -429,6 +486,9 @@ pgnq convert tournament.pgn --game 3 -o game3.pgn
 ### Opening Repertoire Management
 
 ```bash
+# Merge separate opening files into one repertoire
+pgnq merge sicilian.pgn french.pgn caro_kann.pgn -o black_vs_e4.pgn
+
 # Split a study into chapter files
 pgnq split repertoire.pgn \
   -s "e4/e5/Nf3/Nc6/Bb5:ruy_lopez" \
@@ -440,6 +500,9 @@ pgnq split repertoire.pgn \
 for f in openings/*.pgn; do
   echo "$f: $(pgnq stats "$f" --json | jq '.leaf_nodes') lines"
 done
+
+# Build a complete repertoire from multiple sources
+pgnq merge openings/*.pgn | pgnq convert -F lichess -o complete_repertoire.pgn
 ```
 
 ### Clean Up Annotated Games
