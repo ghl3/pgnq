@@ -204,6 +204,42 @@ impl GameNode {
         self.children.last_mut().unwrap()
     }
 
+    /// Navigate to a descendant node by a path of child indices.
+    ///
+    /// The path is a slice of indices where each index represents which child
+    /// to follow at that level. An empty path returns self.
+    ///
+    /// # Panics
+    /// Panics if any index in the path is out of bounds.
+    pub fn navigate_path(&self, path: &[usize]) -> &GameNode {
+        let mut current = self;
+        for &idx in path {
+            current = current
+                .children
+                .get(idx)
+                .expect("Path index out of bounds");
+        }
+        current
+    }
+
+    /// Navigate to a descendant node by a path of child indices (mutable).
+    ///
+    /// The path is a slice of indices where each index represents which child
+    /// to follow at that level. An empty path returns self.
+    ///
+    /// # Panics
+    /// Panics if any index in the path is out of bounds.
+    pub fn navigate_path_mut(&mut self, path: &[usize]) -> &mut GameNode {
+        let mut current = self;
+        for &idx in path {
+            current = current
+                .children
+                .get_mut(idx)
+                .expect("Path index out of bounds");
+        }
+        current
+    }
+
     /// Create a deep copy of this subtree
     pub fn deep_clone(&self) -> Self {
         // Use iterative approach to handle deep trees without stack overflow.
@@ -228,7 +264,7 @@ impl GameNode {
 
         while let Some((source_path, target_path)) = stack.pop() {
             // Navigate to source node
-            let source = get_node_by_path(self, &source_path);
+            let source = self.navigate_path(&source_path);
 
             // Create copy of source node (without children initially)
             let child_copy = GameNode {
@@ -241,7 +277,7 @@ impl GameNode {
             };
 
             // Navigate to target parent and add copy
-            let target_parent = get_node_mut_by_path(&mut result, &target_path[..target_path.len() - 1]);
+            let target_parent = result.navigate_path_mut(&target_path[..target_path.len() - 1]);
             target_parent.children.push(child_copy);
 
             // Add children to process
@@ -258,48 +294,14 @@ impl GameNode {
     }
 }
 
-/// Navigate to a node by path (immutable)
-/// Uses bounds-checked access to avoid panics on invalid paths.
-fn get_node_by_path<'a>(root: &'a GameNode, path: &[usize]) -> &'a GameNode {
-    let mut current = root;
-    for &idx in path {
-        current = current
-            .children
-            .get(idx)
-            .expect("Internal error: invalid path index in deep_clone");
-    }
-    current
-}
-
-/// Navigate to a node by path (mutable)
-/// Uses bounds-checked access to avoid panics on invalid paths.
-fn get_node_mut_by_path<'a>(root: &'a mut GameNode, path: &[usize]) -> &'a mut GameNode {
-    let mut current = root;
-    for &idx in path {
-        current = current
-            .children
-            .get_mut(idx)
-            .expect("Internal error: invalid path index in deep_clone");
-    }
-    current
-}
-
 impl Default for GameNode {
     fn default() -> Self {
         Self::root()
     }
 }
 
-/// Normalize SAN for comparison (strip move numbers, whitespace)
-fn normalize_san(san: &str) -> String {
-    let s = san.trim();
-    // Strip move number prefix like "1." or "1..."
-    if let Some(idx) = s.find(|c: char| c.is_ascii_alphabetic() || c == 'O') {
-        s[idx..].to_string()
-    } else {
-        s.to_string()
-    }
-}
+// Use centralized SAN normalization
+use super::san::normalize as normalize_san;
 
 #[cfg(test)]
 mod tests {
@@ -686,42 +688,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Normalize SAN Tests
-    // ========================================================================
-
-    #[test]
-    fn test_normalize_san() {
-        assert_eq!(normalize_san("1. e4"), "e4");
-        assert_eq!(normalize_san("1...e5"), "e5");
-        assert_eq!(normalize_san("Nf3"), "Nf3");
-        assert_eq!(normalize_san("O-O"), "O-O");
-    }
-
-    #[test]
-    fn test_normalize_san_high_move_number() {
-        assert_eq!(normalize_san("100. Kf1"), "Kf1");
-        assert_eq!(normalize_san("50...Kf8"), "Kf8");
-    }
-
-    #[test]
-    fn test_normalize_san_with_check() {
-        assert_eq!(normalize_san("15. Qxf7+"), "Qxf7+");
-        assert_eq!(normalize_san("20. Qxf7#"), "Qxf7#");
-    }
-
-    #[test]
-    fn test_normalize_san_promotion() {
-        assert_eq!(normalize_san("8. e8=Q+"), "e8=Q+");
-    }
-
-    #[test]
-    fn test_normalize_san_whitespace() {
-        assert_eq!(normalize_san("  e4  "), "e4");
-        assert_eq!(normalize_san("  1. e4  "), "e4");
-    }
-
-    // ========================================================================
-    // Add Child Tests
+    // Add Child Tests (SAN normalization tests moved to san.rs)
     // ========================================================================
 
     #[test]

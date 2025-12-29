@@ -300,17 +300,10 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
     Ok(tree)
 }
 
-/// Navigate to a node given a path of child indices
-/// This is internal to the builder and paths are always valid.
+/// Navigate to a node given a path of child indices.
+/// Uses GameNode::navigate_path_mut for centralized path navigation.
 fn get_node_mut<'a>(root: &'a mut GameNode, path: &[usize]) -> &'a mut GameNode {
-    let mut current = root;
-    for &idx in path {
-        current = current
-            .children
-            .get_mut(idx)
-            .expect("Internal error: invalid path index in builder");
-    }
-    current
+    root.navigate_path_mut(path)
 }
 
 /// Parse a header string like [Event "Test Game"] into (key, value)

@@ -4,6 +4,7 @@ mod game;
 mod iter;
 mod node;
 mod path;
+pub mod san;
 
 pub use game::{GameResult, GameTree};
 pub use iter::{DfsIter, MainLineIter};
