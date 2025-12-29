@@ -10,14 +10,14 @@ A Unix-like command-line tool for querying and manipulating chess PGN files.
 
 | Command | Description |
 |---------|-------------|
-| `info` | Display file metadata and statistics |
-| `tree` | Visualize the game tree |
-| `stats` | Detailed statistics in JSON format |
-| `convert` | Transform between PGN formats |
-| `extract` | Extract a subtree at a specific path |
-| `split` | Split into multiple files at node paths |
-| `filter` | Filter nodes by criteria |
-| `merge` | Combine multiple files into one tree |
+| [`info`](#pgnq-info) | Display file metadata and statistics |
+| [`tree`](#pgnq-tree) | Visualize the game tree |
+| [`stats`](#pgnq-stats) | Detailed statistics in JSON format |
+| [`convert`](#pgnq-convert) | Transform between PGN formats |
+| [`extract`](#pgnq-extract) | Extract a subtree at a specific path |
+| [`split`](#pgnq-split) | Split into multiple files at node paths |
+| [`filter`](#pgnq-filter) | Filter nodes by criteria |
+| [`merge`](#pgnq-merge) | Combine multiple files into one tree |
 
 ## Examples
 
