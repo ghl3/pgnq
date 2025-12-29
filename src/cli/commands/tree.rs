@@ -7,12 +7,19 @@ use crate::tree::{GameNode, NodePath};
 use anyhow::Result;
 use clap::Args;
 use serde_json::json;
+use std::fs;
+use std::io::{self, Write};
+use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct TreeArgs {
     /// Input PGN file (use '-' for stdin)
     #[arg(value_name = "FILE", default_value = "-")]
     pub input: InputSource,
+
+    /// Output file (default: stdout)
+    #[arg(short = 'o', long)]
+    pub output: Option<PathBuf>,
 
     /// Maximum depth to display
     #[arg(short = 'd', long, default_value = "10")]
@@ -59,30 +66,34 @@ pub fn run(args: TreeArgs, _quiet: bool) -> Result<()> {
         tree.root.clone()
     };
 
-    if args.json {
+    let output_string = if args.json {
         let json_tree = node_to_json(&display_root, args.depth, 0);
-        println!("{}", serde_json::to_string_pretty(&json_tree)?);
-        return Ok(());
-    }
+        serde_json::to_string_pretty(&json_tree)?
+    } else {
+        let options = OutputOptions {
+            format: OutputFormat::Tree,
+            max_depth: args.depth,
+            ascii: args.ascii,
+            show_comments: args.show_comments,
+            show_nags: args.show_nags,
+            ..Default::default()
+        };
 
-    let options = OutputOptions {
-        format: OutputFormat::Tree,
-        max_depth: args.depth,
-        ascii: args.ascii,
-        show_comments: args.show_comments,
-        show_nags: args.show_nags,
-        ..Default::default()
+        // If a path is specified, use the subtree
+        if args.from_path.is_some() {
+            let mut subtree = crate::tree::GameTree::new();
+            subtree.root = display_root;
+            to_tree_view(&subtree, &options)
+        } else {
+            to_tree_view(&tree, &options)
+        }
     };
 
-    // If a path is specified, use the subtree
-    if args.from_path.is_some() {
-        let mut subtree = crate::tree::GameTree::new();
-        subtree.root = display_root;
-        let output = to_tree_view(&subtree, &options);
-        print!("{}", output);
+    // Write output
+    if let Some(path) = args.output {
+        fs::write(&path, &output_string)?;
     } else {
-        let output = to_tree_view(&tree, &options);
-        print!("{}", output);
+        io::stdout().write_all(output_string.as_bytes())?;
     }
 
     Ok(())

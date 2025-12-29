@@ -4,8 +4,12 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Numeric Annotation Glyph - standard chess annotation
+///
+/// NAG values are u8 integers (0-255) as defined by the PGN standard.
+/// Use the predefined constants (e.g., `Nag::GOOD_MOVE`) or `Nag::new()`
+/// to construct NAG values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Nag(pub u8);
+pub struct Nag(u8);
 
 impl Nag {
     // Common NAGs
@@ -22,6 +26,26 @@ impl Nag {
     pub const BLACK_MODERATE_ADVANTAGE: Nag = Nag(17);
     pub const WHITE_DECISIVE_ADVANTAGE: Nag = Nag(18);
     pub const BLACK_DECISIVE_ADVANTAGE: Nag = Nag(19);
+
+    /// Create a new NAG from a raw u8 value.
+    ///
+    /// NAG values are standardized integers where:
+    /// - 0 = null annotation
+    /// - 1-6 = move assessments (!, ?, !!, ??, !?, ?!)
+    /// - 10-19 = positional evaluations
+    /// - etc.
+    ///
+    /// All u8 values are valid NAG codes.
+    #[inline]
+    pub const fn new(value: u8) -> Self {
+        Nag(value)
+    }
+
+    /// Get the raw u8 value of this NAG.
+    #[inline]
+    pub const fn value(self) -> u8 {
+        self.0
+    }
 
     /// Convert NAG to its symbolic representation
     pub fn to_symbol(self) -> Option<&'static str> {
@@ -93,19 +117,27 @@ mod tests {
 
     #[test]
     fn test_nag_constants() {
-        assert_eq!(Nag::GOOD_MOVE.0, 1);
-        assert_eq!(Nag::POOR_MOVE.0, 2);
-        assert_eq!(Nag::BRILLIANT_MOVE.0, 3);
-        assert_eq!(Nag::BLUNDER.0, 4);
-        assert_eq!(Nag::INTERESTING_MOVE.0, 5);
-        assert_eq!(Nag::DUBIOUS_MOVE.0, 6);
-        assert_eq!(Nag::EQUAL.0, 10);
-        assert_eq!(Nag::WHITE_SLIGHT_ADVANTAGE.0, 14);
-        assert_eq!(Nag::BLACK_SLIGHT_ADVANTAGE.0, 15);
-        assert_eq!(Nag::WHITE_MODERATE_ADVANTAGE.0, 16);
-        assert_eq!(Nag::BLACK_MODERATE_ADVANTAGE.0, 17);
-        assert_eq!(Nag::WHITE_DECISIVE_ADVANTAGE.0, 18);
-        assert_eq!(Nag::BLACK_DECISIVE_ADVANTAGE.0, 19);
+        assert_eq!(Nag::GOOD_MOVE.value(), 1);
+        assert_eq!(Nag::POOR_MOVE.value(), 2);
+        assert_eq!(Nag::BRILLIANT_MOVE.value(), 3);
+        assert_eq!(Nag::BLUNDER.value(), 4);
+        assert_eq!(Nag::INTERESTING_MOVE.value(), 5);
+        assert_eq!(Nag::DUBIOUS_MOVE.value(), 6);
+        assert_eq!(Nag::EQUAL.value(), 10);
+        assert_eq!(Nag::WHITE_SLIGHT_ADVANTAGE.value(), 14);
+        assert_eq!(Nag::BLACK_SLIGHT_ADVANTAGE.value(), 15);
+        assert_eq!(Nag::WHITE_MODERATE_ADVANTAGE.value(), 16);
+        assert_eq!(Nag::BLACK_MODERATE_ADVANTAGE.value(), 17);
+        assert_eq!(Nag::WHITE_DECISIVE_ADVANTAGE.value(), 18);
+        assert_eq!(Nag::BLACK_DECISIVE_ADVANTAGE.value(), 19);
+    }
+
+    #[test]
+    fn test_nag_new() {
+        assert_eq!(Nag::new(1), Nag::GOOD_MOVE);
+        assert_eq!(Nag::new(4), Nag::BLUNDER);
+        assert_eq!(Nag::new(100).value(), 100);
+        assert_eq!(Nag::new(255).value(), 255);
     }
 
     // ========================================================================

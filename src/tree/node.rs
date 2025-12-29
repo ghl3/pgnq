@@ -763,21 +763,21 @@ mod tests {
     #[test]
     fn test_node_with_nags() {
         let mut node = GameNode::new("e4");
-        node.nags.push(Nag(1)); // Good move
-        node.nags.push(Nag(14)); // White has slight advantage
+        node.nags.push(Nag::GOOD_MOVE);
+        node.nags.push(Nag::WHITE_SLIGHT_ADVANTAGE);
 
         assert_eq!(node.nags.len(), 2);
-        assert_eq!(node.nags[0], Nag(1));
+        assert_eq!(node.nags[0], Nag::GOOD_MOVE);
     }
 
     #[test]
     fn test_deep_clone_preserves_nags() {
         let mut root = GameNode::root();
         let e4 = root.add_child(GameNode::new("e4"));
-        e4.nags.push(Nag(1));
+        e4.nags.push(Nag::GOOD_MOVE);
 
         let clone = root.deep_clone();
         assert_eq!(clone.children[0].nags.len(), 1);
-        assert_eq!(clone.children[0].nags[0], Nag(1));
+        assert_eq!(clone.children[0].nags[0], Nag::GOOD_MOVE);
     }
 }

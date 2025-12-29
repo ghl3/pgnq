@@ -5,12 +5,19 @@ use crate::parser::parse;
 use anyhow::Result;
 use clap::Args;
 use std::collections::HashMap;
+use std::fs;
+use std::io::{self, Write};
+use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct StatsArgs {
     /// Input PGN file (use '-' for stdin)
     #[arg(value_name = "FILE", default_value = "-")]
     pub input: InputSource,
+
+    /// Output file (default: stdout)
+    #[arg(short = 'o', long)]
+    pub output: Option<PathBuf>,
 
     /// Output as JSON
     #[arg(long)]
@@ -49,7 +56,7 @@ pub fn run(args: StatsArgs, _quiet: bool) -> Result<()> {
         }
     }
 
-    if args.json {
+    let output_string = if args.json {
         let stats = serde_json::json!({
             "total_nodes": tree.count_nodes(),
             "leaf_nodes": tree.count_lines(),
@@ -59,27 +66,36 @@ pub fn run(args: StatsArgs, _quiet: bool) -> Result<()> {
             "variation_count": variation_count,
             "nag_counts": nag_counts,
         });
-        println!("{}", serde_json::to_string_pretty(&stats)?);
-        return Ok(());
-    }
+        format!("{}\n", serde_json::to_string_pretty(&stats)?)
+    } else {
+        // Text output
+        let mut out = String::new();
+        out.push_str("Statistics:\n");
+        out.push_str(&format!("  Total nodes: {}\n", tree.count_nodes()));
+        out.push_str(&format!("  Leaf nodes (lines): {}\n", tree.count_lines()));
+        out.push_str(&format!("  Commented nodes: {}\n", tree.count_comments()));
+        out.push_str(&format!("  Max depth: {}\n", tree.max_depth()));
+        out.push_str(&format!("  Main line length: {}\n", tree.main_line_length()));
+        out.push_str(&format!("  Variations: {}\n", variation_count));
 
-    // Text output
-    println!("Statistics:");
-    println!("  Total nodes: {}", tree.count_nodes());
-    println!("  Leaf nodes (lines): {}", tree.count_lines());
-    println!("  Commented nodes: {}", tree.count_comments());
-    println!("  Max depth: {}", tree.max_depth());
-    println!("  Main line length: {}", tree.main_line_length());
-    println!("  Variations: {}", variation_count);
-
-    if !nag_counts.is_empty() {
-        println!();
-        println!("NAG distribution:");
-        let mut nags: Vec<_> = nag_counts.iter().collect();
-        nags.sort_by(|a, b| b.1.cmp(a.1));
-        for (nag, count) in nags.iter().take(10) {
-            println!("  {}: {}", nag, count);
+        if !nag_counts.is_empty() {
+            out.push('\n');
+            out.push_str("NAG distribution:\n");
+            let mut nags: Vec<_> = nag_counts.iter().collect();
+            nags.sort_by(|a, b| b.1.cmp(a.1));
+            for (nag, count) in nags.iter().take(10) {
+                out.push_str(&format!("  {}: {}\n", nag, count));
+            }
         }
+
+        out
+    };
+
+    // Write output
+    if let Some(path) = args.output {
+        fs::write(&path, &output_string)?;
+    } else {
+        io::stdout().write_all(output_string.as_bytes())?;
     }
 
     Ok(())

@@ -209,7 +209,7 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
             | Token::Bang(_)
             | Token::Question(_) => {
                 if let Some(nag_val) = token.as_nag_value() {
-                    let nag = Nag(nag_val);
+                    let nag = Nag::new(nag_val);
                     if current_path.is_empty() {
                         pending_nags.push(nag);
                     } else {
@@ -227,7 +227,7 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
             | Token::WhiteSlightlyBetter
             | Token::BlackSlightlyBetter => {
                 if let Some(nag_val) = token.as_nag_value() {
-                    let nag = Nag(nag_val);
+                    let nag = Nag::new(nag_val);
                     if current_path.is_empty() {
                         pending_nags.push(nag);
                     } else {
