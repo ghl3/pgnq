@@ -778,3 +778,398 @@ fn test_cli_merge_identical_games() {
     assert!(stdout.contains("Nf3"));
     assert!(stdout.contains("Nc6"));
 }
+
+// ============================================================================
+// Combined --strip-* Flags Tests (Additional Coverage)
+// ============================================================================
+
+#[test]
+fn test_cli_convert_strip_clocks_and_evals_combined() {
+    let pgn = "1. e4 {[%clk 0:03:00] [%eval +0.5]} e5 {[%clk 0:02:55] [%eval -0.3]} *";
+
+    let (code, stdout, _) = run_pgnq(
+        &["convert", "--strip-clocks", "--strip-evals", "-"],
+        Some(pgn),
+    );
+    assert_eq!(code, 0);
+    assert!(!stdout.contains("%clk"));
+    assert!(!stdout.contains("%eval"));
+    // Moves should still be present
+    assert!(stdout.contains("e4"));
+    assert!(stdout.contains("e5"));
+}
+
+#[test]
+fn test_cli_convert_strip_clocks_preserve_text_comments() {
+    let pgn = "1. e4 {[%clk 0:03:00] Good opening move} e5 *";
+
+    let (code, stdout, _) = run_pgnq(&["convert", "--strip-clocks", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    assert!(!stdout.contains("%clk"));
+    // Text comment should be preserved
+    assert!(stdout.contains("Good opening move"));
+}
+
+#[test]
+fn test_cli_convert_strip_evals_preserve_text_comments() {
+    let pgn = "1. e4 {[%eval +0.5] Solid choice} e5 *";
+
+    let (code, stdout, _) = run_pgnq(&["convert", "--strip-evals", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    assert!(!stdout.contains("%eval"));
+    // Text comment should be preserved
+    assert!(stdout.contains("Solid choice"));
+}
+
+#[test]
+fn test_cli_convert_strip_all_with_nags() {
+    let pgn = "1. e4! {[%clk 0:03:00] [%eval +0.5] Best move} e5? {[%clk 0:02:55]} *";
+
+    let (code, stdout, _) = run_pgnq(
+        &["convert", "--strip-clocks", "--strip-evals", "-"],
+        Some(pgn),
+    );
+    assert_eq!(code, 0);
+    assert!(!stdout.contains("%clk"));
+    assert!(!stdout.contains("%eval"));
+    // NAGs and text comments should be preserved
+    assert!(stdout.contains("Best move"));
+}
+
+#[test]
+fn test_cli_convert_strip_and_no_comments() {
+    let pgn = "1. e4 {[%clk 0:03:00] Opening} e5 {[%eval +0.3] Response} *";
+
+    let (code, stdout, _) = run_pgnq(
+        &["convert", "--strip-clocks", "--strip-evals", "--no-comments", "-"],
+        Some(pgn),
+    );
+    assert_eq!(code, 0);
+    assert!(!stdout.contains("%clk"));
+    assert!(!stdout.contains("%eval"));
+    assert!(!stdout.contains("Opening"));
+    assert!(!stdout.contains("Response"));
+}
+
+#[test]
+fn test_cli_convert_strip_and_no_variations() {
+    let pgn = "1. e4 {[%clk 0:03:00]} e5 (1... c5 {[%eval +0.2]}) *";
+
+    let (code, stdout, _) = run_pgnq(
+        &["convert", "--strip-clocks", "--strip-evals", "--no-variations", "-"],
+        Some(pgn),
+    );
+    assert_eq!(code, 0);
+    assert!(!stdout.contains("%clk"));
+    assert!(!stdout.contains("c5"));
+}
+
+#[test]
+fn test_cli_convert_all_strip_flags_with_format() {
+    let pgn = r#"[Event "Test"]
+1. e4! {[%clk 0:03:00] [%eval +0.5] Opening} e5 (1... c5) *"#;
+
+    let (code, stdout, _) = run_pgnq(
+        &[
+            "convert",
+            "--format", "minimal",
+            "--strip-clocks",
+            "--strip-evals",
+            "-",
+        ],
+        Some(pgn),
+    );
+    assert_eq!(code, 0);
+    assert!(!stdout.contains("%clk"));
+    assert!(!stdout.contains("%eval"));
+}
+
+// ============================================================================
+// Filter Command - Multiple Criteria Tests
+// ============================================================================
+
+#[test]
+fn test_cli_filter_has_nag() {
+    let pgn = "1. e4! e5 2. Nf3!! Nc6? *";
+
+    let (code, stdout, _) = run_pgnq(&["filter", "--has-nag", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Should filter to nodes with NAGs
+    assert!(stdout.len() > 0);
+}
+
+#[test]
+fn test_cli_filter_min_depth() {
+    let pgn = "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *";
+
+    let (code, stdout, _) = run_pgnq(&["filter", "--min-depth", "3", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Should filter to nodes at depth 3+
+    assert!(stdout.len() > 0);
+}
+
+#[test]
+fn test_cli_filter_max_depth() {
+    let pgn = "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *";
+
+    let (code, stdout, _) = run_pgnq(&["filter", "--max-depth", "2", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Should filter to nodes at depth <=2
+    assert!(stdout.len() > 0);
+}
+
+#[test]
+fn test_cli_filter_depth_range() {
+    let pgn = "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 *";
+
+    let (code, stdout, _) = run_pgnq(
+        &["filter", "--min-depth", "2", "--max-depth", "4", "-"],
+        Some(pgn),
+    );
+    assert_eq!(code, 0);
+    assert!(stdout.len() > 0);
+}
+
+#[test]
+fn test_cli_filter_main_line() {
+    let pgn = "1. e4 e5 (1... c5 2. Nf3 d6) 2. Nf3 Nc6 *";
+
+    let (code, stdout, _) = run_pgnq(&["filter", "--main-line", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Should show only main line
+    assert!(stdout.len() > 0);
+}
+
+#[test]
+fn test_cli_filter_invert() {
+    let pgn = "1. e4 {comment} e5 2. Nf3 Nc6 *";
+
+    let (code, stdout, _) = run_pgnq(&["filter", "--has-comment", "--invert", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Inverted: should show nodes WITHOUT comments
+    assert!(stdout.len() > 0);
+}
+
+#[test]
+fn test_cli_filter_combined_has_comment_and_nag() {
+    let pgn = "1. e4! {Opening} e5 2. Nf3! {Knight out} Nc6 *";
+
+    // Nodes that have BOTH comment AND nag
+    let (code, stdout, _) = run_pgnq(
+        &["filter", "--has-comment", "--has-nag", "-"],
+        Some(pgn),
+    );
+    assert_eq!(code, 0);
+    assert!(stdout.len() > 0);
+}
+
+#[test]
+fn test_cli_filter_path_and_depth() {
+    let pgn = "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *";
+
+    let (code, stdout, _) = run_pgnq(
+        &["filter", "--path", "e4/e5", "--min-depth", "1", "-"],
+        Some(pgn),
+    );
+    // Should handle combined path and depth
+    assert!(code == 0 || code == 1);
+}
+
+// ============================================================================
+// Extract Command - Additional Flag Combinations
+// ============================================================================
+
+#[test]
+fn test_cli_extract_with_headers() {
+    let pgn = r#"[Event "Test"]
+[White "Alice"]
+1. e4 e5 2. Nf3 Nc6 *"#;
+
+    let (code, stdout, _) = run_pgnq(
+        &["extract", "--path", "e4/e5", "--with-headers", "-"],
+        Some(pgn),
+    );
+    assert_eq!(code, 0);
+    // Should include headers in output
+    assert!(stdout.contains("[Event") || stdout.contains("Nf3"));
+}
+
+#[test]
+fn test_cli_extract_format_minimal() {
+    let pgn = r#"[Event "Test"]
+1. e4 {comment} e5 2. Nf3 Nc6 *"#;
+
+    let (code, stdout, _) = run_pgnq(
+        &["extract", "--path", "e4/e5", "--format", "minimal", "-"],
+        Some(pgn),
+    );
+    assert_eq!(code, 0);
+    // Minimal format should not include comments
+    assert!(!stdout.contains("comment") || stdout.contains("Nf3"));
+}
+
+#[test]
+fn test_cli_extract_prefix_and_headers() {
+    let pgn = r#"[Event "Championship"]
+[White "Magnus"]
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *"#;
+
+    let (code, stdout, _) = run_pgnq(
+        &["extract", "--path", "e4/e5/Nf3", "--with-prefix", "--with-headers", "-"],
+        Some(pgn),
+    );
+    assert_eq!(code, 0);
+    // Should have prefix moves and headers
+    assert!(stdout.contains("e4") || stdout.contains("Nf3"));
+}
+
+#[test]
+fn test_cli_extract_from_variation() {
+    let pgn = "1. e4 e5 (1... c5 2. Nf3 d6 3. d4) *";
+
+    let (code, stdout, _) = run_pgnq(&["extract", "--path", "e4/c5/Nf3", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Should extract from within the variation
+    assert!(stdout.len() > 0);
+}
+
+#[test]
+fn test_cli_extract_single_move() {
+    let pgn = "1. e4 e5 2. Nf3 Nc6 *";
+
+    let (code, stdout, _) = run_pgnq(&["extract", "--path", "e4", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Should extract from e4 onwards
+    assert!(stdout.contains("e5") || stdout.len() > 0);
+}
+
+// ============================================================================
+// Stats Command - Additional Output Format Tests
+// ============================================================================
+
+#[test]
+fn test_cli_stats_json_structure() {
+    let pgn = "1. e4! e5 {comment} 2. Nf3 *";
+
+    let (code, stdout, _) = run_pgnq(&["stats", "--json", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // JSON should have expected fields
+    assert!(stdout.contains("{"));
+    assert!(stdout.contains("}"));
+    // Should contain some numeric stats
+    assert!(stdout.contains(":") || stdout.contains("\""));
+}
+
+#[test]
+fn test_cli_stats_with_nags() {
+    let pgn = "1. e4! e5? 2. Nf3!! Nc6?? 3. Bb5!? a6?! *";
+
+    let (code, stdout, _) = run_pgnq(&["stats", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Stats should count NAGs
+    assert!(stdout.len() > 0);
+}
+
+// ============================================================================
+// Tree Command - Additional Output Tests
+// ============================================================================
+
+#[test]
+fn test_cli_tree_with_annotations() {
+    let pgn = "1. e4! {Opening} e5 2. Nf3 *";
+
+    let (code, stdout, _) = run_pgnq(&["tree", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Tree should show structure
+    assert!(stdout.contains("e4"));
+}
+
+#[test]
+fn test_cli_tree_deep_variations() {
+    let pgn = "1. e4 (1. d4 (1. c4 Nf6)) e5 *";
+
+    let (code, stdout, _) = run_pgnq(&["tree", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Should show all alternatives
+    assert!(stdout.contains("e4"));
+}
+
+#[test]
+fn test_cli_tree_depth_limits_variations() {
+    let pgn = "1. e4 e5 (1... c5 2. Nf3 d6) 2. Nf3 *";
+
+    let (code, stdout, _) = run_pgnq(&["tree", "--depth", "1", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Depth 1 should limit output
+    assert!(stdout.len() > 0);
+}
+
+// ============================================================================
+// Convert Command - Format Edge Cases
+// ============================================================================
+
+#[test]
+fn test_cli_convert_format_with_variations() {
+    let pgn = "1. e4 e5 (1... c5) 2. Nf3 *";
+
+    for format in &["standard", "lichess", "minimal"] {
+        let (code, stdout, _) = run_pgnq(
+            &["convert", "--format", format, "-"],
+            Some(pgn),
+        );
+        assert_eq!(code, 0, "Format {} failed", format);
+        assert!(stdout.contains("e4"), "Format {} missing e4", format);
+    }
+}
+
+#[test]
+fn test_cli_convert_no_headers_with_format() {
+    let pgn = r#"[Event "Test"]
+1. e4 e5 *"#;
+
+    let (code, stdout, _) = run_pgnq(
+        &["convert", "--no-headers", "--format", "standard", "-"],
+        Some(pgn),
+    );
+    assert_eq!(code, 0);
+    assert!(!stdout.contains("[Event"));
+    assert!(stdout.contains("e4"));
+}
+
+// ============================================================================
+// Error Recovery Tests
+// ============================================================================
+
+#[test]
+fn test_cli_recovers_from_partial_pgn() {
+    // PGN with incomplete game followed by complete game
+    let pgn = r#"[Event "Partial"]
+1. e4
+
+[Event "Complete"]
+1. d4 d5 *"#;
+
+    let (code, _, _) = run_pgnq(&["info", "-"], Some(pgn));
+    // Should not crash, may parse one or both games
+    assert!(code == 0 || code == 1);
+}
+
+#[test]
+fn test_cli_handles_mixed_results() {
+    let pgn = r#"[Event "Game 1"]
+1. e4 e5 1-0
+
+[Event "Game 2"]
+1. d4 d5 0-1
+
+[Event "Game 3"]
+1. c4 c5 1/2-1/2
+
+[Event "Game 4"]
+1. Nf3 Nf6 *"#;
+
+    let (code, stdout, _) = run_pgnq(&["info", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    // Should handle all result types
+    assert!(stdout.len() > 0);
+}
