@@ -4,8 +4,11 @@
 //! and other edge cases to ensure the parser is robust and accepting.
 
 mod common;
+mod dsl;
 
 use common::*;
+use dsl::*;
+use pgnq::nag::Nag;
 use pgnq::parser::parse;
 use pgnq::tree::GameResult;
 use test_case::test_case;
@@ -170,9 +173,14 @@ fn test_parse_promotion_variants() {
 #[test]
 fn test_parse_brace_comments() {
     let tree = parse_pgn(BRACE_COMMENTS);
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(!e4.comment.is_empty());
-    assert!(e4.comment.contains("King's Pawn"));
+
+    let expected = TreeExpectation::new()
+        .root("e4", |n| n
+            .has_comment()
+            .comment_contains("King's Pawn")
+        );
+
+    assert_tree_contains!(tree, expected);
 }
 
 #[test]
@@ -185,35 +193,67 @@ fn test_parse_semicolon_comments() {
 #[test]
 fn test_parse_multiline_comment() {
     let tree = parse_pgn(MULTILINE_COMMENT);
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(e4.comment.contains("longer comment"));
+
+    let expected = TreeExpectation::new()
+        .root("e4", |n| n
+            .comment_contains("longer comment")
+        );
+
+    assert_tree_contains!(tree, expected);
 }
 
 #[test]
 fn test_parse_empty_comment() {
     let tree = parse_pgn(EMPTY_COMMENT);
-    assert_eq!(count_nodes(&tree), 2);
+
+    let expected = TreeExpectation::new()
+        .node_count(2);
+
+    assert_tree_contains!(tree, expected);
 }
 
 #[test]
 fn test_parse_special_chars_in_comment() {
     let tree = parse_pgn(SPECIAL_CHARS_COMMENT);
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(e4.comment.contains("Special chars"));
+
+    let expected = TreeExpectation::new()
+        .root("e4", |n| n
+            .comment_contains("Special chars")
+        );
+
+    assert_tree_contains!(tree, expected);
 }
 
 #[test]
 fn test_parse_comment_with_moves_mentioned() {
     let pgn = r#"1. e4 {After e4, Black can reply with e5, c5, or e6} e5 *"#;
     let tree = parse_pgn(pgn);
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(e4.comment.contains("e4"));
+
+    let expected = TreeExpectation::new()
+        .ongoing()
+        .root("e4", |n| n
+            .comment_contains("e4")
+            .comment_contains("Black can reply")
+            .leaf("e5")
+        );
+
+    assert_tree_contains!(tree, expected);
 }
 
 #[test]
 fn test_parse_unicode_in_comment() {
     let pgn = "1. e4 {The king ♔ attacks} e5 *";
     let tree = parse_pgn(pgn);
+
+    let expected = TreeExpectation::new()
+        .ongoing()
+        .root("e4", |n| n
+            .has_comment()
+            .child("e5", |n| n)
+        );
+
+    assert_tree_contains!(tree, expected);
+    // Additional verification for unicode
     let e4 = tree.root.find_child("e4").unwrap();
     assert!(e4.comment.contains("♔") || e4.comment.contains("king"));
 }
@@ -225,16 +265,24 @@ fn test_parse_unicode_in_comment() {
 #[test]
 fn test_parse_symbolic_nags() {
     let tree = parse_pgn(SYMBOLIC_NAGS);
-    let e4 = tree.root.find_child("e4").unwrap();
+
     // e4 has ! (good move, NAG 1)
-    assert!(!e4.nags.is_empty());
+    let expected = TreeExpectation::new()
+        .root("e4", |n| n
+            .nag(Nag::GOOD_MOVE)
+        );
+
+    assert_tree_contains!(tree, expected);
 }
 
 #[test]
 fn test_parse_numeric_nags() {
     let tree = parse_pgn(NUMERIC_NAGS);
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(!e4.nags.is_empty());
+
+    let expected = TreeExpectation::new()
+        .root("e4", |n| n.has_nag());
+
+    assert_tree_contains!(tree, expected);
 }
 
 #[test]
@@ -246,8 +294,14 @@ fn test_parse_positional_nags() {
 #[test]
 fn test_parse_multiple_nags() {
     let tree = parse_pgn(MULTIPLE_NAGS);
-    let e4 = tree.root.find_child("e4").unwrap();
+
     // e4 has both ! and $14
+    let expected = TreeExpectation::new()
+        .root("e4", |n| n.has_nag());
+
+    assert_tree_contains!(tree, expected);
+    // Verify at least one NAG
+    let e4 = tree.root.find_child("e4").unwrap();
     assert!(e4.nags.len() >= 1);
 }
 
@@ -288,50 +342,95 @@ fn test_parse_numeric_nag_values(pgn: &str) -> usize {
 #[test]
 fn test_parse_single_variation() {
     let tree = parse_pgn(SINGLE_VARIATION);
-    let e4 = tree.root.find_child("e4").unwrap();
+
     // e4 should have two children: e5 (main) and c5 (variation)
-    assert_eq!(e4.children.len(), 2);
+    let expected = TreeExpectation::new()
+        .root("e4", |n| n
+            .children_count(2)
+            .has_variations()
+            .has_child("e5")
+            .has_child("c5")
+        );
+
+    assert_tree_contains!(tree, expected);
 }
 
 #[test]
 fn test_parse_sibling_variations() {
     let tree = parse_pgn(SIBLING_VARIATIONS);
-    let e4 = tree.root.find_child("e4").unwrap();
+
     // e4 should have 4 children: e5, c5, e6, d5
-    assert_eq!(e4.children.len(), 4);
+    let expected = TreeExpectation::new()
+        .root("e4", |n| n
+            .children_count(4)
+            .child("e5", |n| n)
+            .variation("c5", |n| n)
+            .variation("e6", |n| n)
+            .variation("d5", |n| n)
+        );
+
+    assert_tree_contains!(tree, expected);
 }
 
 #[test]
 fn test_parse_nested_variations() {
     let tree = parse_pgn(NESTED_VARIATIONS);
-    assert!(count_nodes(&tree) > 5);
+
     // Verify nested structure exists
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(e4.children.len() >= 2);
+    let expected = TreeExpectation::new()
+        .root("e4", |n| n
+            .has_variations()
+            .has_child("e5")
+        );
+
+    assert_tree_contains!(tree, expected);
+    assert!(count_nodes(&tree) > 5);
 }
 
 #[test]
 fn test_parse_variation_with_annotations() {
     let tree = parse_pgn(VARIATION_WITH_ANNOTATIONS);
-    let e4 = tree.root.find_child("e4").unwrap();
-    // Find the c5 variation
-    let c5 = e4.children.iter().find(|c| c.san == "c5");
-    assert!(c5.is_some());
-    assert!(c5.unwrap().comment.contains("Sicilian"));
+
+    // Verify c5 variation has Sicilian comment
+    let expected = TreeExpectation::new()
+        .root("e4", |n| n
+            .has_variations()
+            .child("e5", |n| n)
+            .variation("c5", |n| n
+                .comment_contains("Sicilian")
+            )
+        );
+
+    assert_tree_contains!(tree, expected);
 }
 
 #[test]
 fn test_parse_early_variation() {
     let tree = parse_pgn(EARLY_VARIATION);
+
     // Root should have variation: e4 (main) and d4 (variation)
-    assert!(tree.root.children.len() >= 2);
+    let expected = TreeExpectation::new()
+        .root("e4", |n| n)
+        .root_variation("d4", |n| n);
+
+    assert_tree_contains!(tree, expected);
 }
 
 #[test]
 fn test_parse_deeply_nested_variations() {
+    // These are all variations at move 1, so they're siblings
     let pgn = r#"1. e4 (1. d4 (1. c4 (1. Nf3 d5) c5) d5) e5 *"#;
     let tree = parse_pgn(pgn);
-    // Should handle 4 levels of nesting
+
+    // All opening moves are siblings of e4
+    let expected = TreeExpectation::new()
+        .ongoing()
+        .root("e4", |n| n.has_child("e5"))
+        .root_variation("d4", |n| n)
+        .root_variation("c4", |n| n)
+        .root_variation("Nf3", |n| n);
+
+    assert_tree_contains!(tree, expected);
     assert!(count_nodes(&tree) > 4);
 }
 
@@ -339,7 +438,19 @@ fn test_parse_deeply_nested_variations() {
 fn test_variation_after_every_move() {
     let pgn = "1. e4 (1. d4) e5 (1... c5) 2. Nf3 (2. Bc4) Nc6 (2... Nf6) *";
     let tree = parse_pgn(pgn);
-    assert!(count_nodes(&tree) > 4);
+
+    // Variations at multiple points
+    let expected = TreeExpectation::new()
+        .ongoing()
+        .root("e4", |n| n
+            .has_variations() // e5 and c5
+            .child("e5", |n| n
+                .has_variations() // Nf3 and Bc4
+            )
+        )
+        .root_variation("d4", |n| n);
+
+    assert_tree_contains!(tree, expected);
 }
 
 // ============================================================================
@@ -913,7 +1024,17 @@ fn test_parse_variation_starting_at_move_one() {
 fn test_parse_multiple_variations_same_point() {
     let pgn = "1. e4 (1. d4) (1. c4) (1. Nf3) (1. g3) e5 *";
     let tree = parse_pgn(pgn);
+
     // Root should have 5 children: e4 + 4 variations
+    let expected = TreeExpectation::new()
+        .ongoing()
+        .root("e4", |n| n.leaf("e5"))
+        .root_variation("d4", |n| n)
+        .root_variation("c4", |n| n)
+        .root_variation("Nf3", |n| n)
+        .root_variation("g3", |n| n);
+
+    assert_tree_contains!(tree, expected);
     assert_eq!(tree.root.children.len(), 5);
 }
 
@@ -921,27 +1042,77 @@ fn test_parse_multiple_variations_same_point() {
 fn test_parse_variation_with_sub_variations() {
     let pgn = "1. e4 e5 (1... c5 2. Nf3 (2. Nc3 Nc6) d6) 2. Nf3 *";
     let tree = parse_pgn(pgn);
-    // Should parse all nested variations
-    assert!(tree.root.find_child("e4").is_some());
+
+    // Main line and Sicilian variation with sub-variations
+    let expected = TreeExpectation::new()
+        .ongoing()
+        .root("e4", |n| n
+            .has_variations()
+            .child("e5", |n| n
+                .leaf("Nf3")
+            )
+            .variation("c5", |n| n
+                .has_variations() // Nf3 main and Nc3 variation
+                .has_child("Nf3")
+                .has_child("Nc3")
+            )
+        );
+
+    assert_tree_contains!(tree, expected);
 }
 
 #[test]
-fn test_parse_variation_at_every_move() {
+fn test_parse_variation_at_every_move_comprehensive() {
     let pgn = "1. e4 (1. d4) e5 (1... c5) 2. Nf3 (2. Bc4) Nc6 (2... Nf6) *";
     let tree = parse_pgn(pgn);
-    // Multiple variations throughout
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(e4.children.len() >= 2); // e5 and c5
+
+    // Multiple variations throughout the game
+    let expected = TreeExpectation::new()
+        .ongoing()
+        .root("e4", |n| n
+            .has_variations() // e5 and c5
+            .child("e5", |n| n
+                .has_variations() // Nf3 and Bc4
+                .child("Nf3", |n| n
+                    .has_variations() // Nc6 and Nf6
+                )
+            )
+        )
+        .root_variation("d4", |n| n);
+
+    assert_tree_contains!(tree, expected);
 }
 
 #[test]
 fn test_parse_long_variation() {
+    // Long Sicilian Najdorf variation
     let pgn = "1. e4 e5 (1... c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6 6. Be2 e5 7. Nb3 Be7 8. O-O O-O 9. Be3 Be6) 2. Nf3 *";
     let tree = parse_pgn(pgn);
-    // Variation should have many moves
-    let e4 = tree.root.find_child("e4").unwrap();
-    let c5 = e4.find_child("c5");
-    assert!(c5.is_some());
+
+    // Verify the Sicilian variation is present with deep continuation
+    let expected = TreeExpectation::new()
+        .ongoing()
+        .root("e4", |n| n
+            .has_variations()
+            .child("e5", |n| n.leaf("Nf3"))
+            .variation("c5", |n| n
+                .child("Nf3", |n| n
+                    .child("d6", |n| n
+                        .child("d4", |n| n
+                            .child("cxd4", |n| n
+                                .child("Nxd4", |n| n
+                                    .child("Nf6", |n| n
+                                        .has_child("Nc3")
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        );
+
+    assert_tree_contains!(tree, expected);
 }
 
 // ============================================================================
