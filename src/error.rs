@@ -5,9 +5,6 @@ use thiserror::Error;
 /// Main error type for pgnq operations
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("Parse error at line {line}: {message}")]
-    Parse { line: usize, message: String },
-
     #[error("Path not found: {0}")]
     PathNotFound(String),
 

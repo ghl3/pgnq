@@ -447,3 +447,167 @@ fn test_roundtrip_annotated_game() {
     // Move counts should match
     assert_eq!(tree1.count_nodes(), tree2.count_nodes());
 }
+
+// ============================================================================
+// Additional Edge Cases for Parser Robustness
+// ============================================================================
+
+/// Test header with special characters (common in ChessBase exports)
+#[test]
+fn test_special_characters_in_headers() {
+    // Test Unicode and apostrophes in headers (escaped quotes tested separately in builder tests)
+    let pgn = r#"[Event "Tata Steel A Group"]
+[Site "Wijk aan Zee"]
+[White "O'Kelly, Albéric"]
+[Black "Müller, Hans"]
+[Result "1-0"]
+
+1. e4 e5 1-0"#;
+
+    let tree = parse(pgn).unwrap();
+    assert!(tree.header("Event").unwrap().contains("Tata Steel"));
+    assert!(tree.header("White").unwrap().contains("O'Kelly"));
+    assert!(tree.header("White").unwrap().contains("Albéric"));
+    assert!(tree.header("Black").unwrap().contains("Müller"));
+}
+
+/// Test unusual whitespace (tabs, multiple spaces, etc.)
+#[test]
+fn test_unusual_whitespace() {
+    let pgn = "[Event \"Test\"]\n[Result \"*\"]\n\n1.  e4    e5\t2. Nf3\t\tNc6   3.  Bb5 *";
+
+    let tree = parse(pgn).unwrap();
+    assert_eq!(tree.count_nodes(), 5);
+}
+
+/// Test Windows line endings (CRLF)
+#[test]
+fn test_windows_line_endings() {
+    let pgn = "[Event \"Test\"]\r\n[Site \"?\"]\r\n[Result \"*\"]\r\n\r\n1. e4 e5 2. Nf3 *\r\n";
+
+    let tree = parse(pgn).unwrap();
+    assert_eq!(tree.header("Event"), Some("Test"));
+    assert_eq!(tree.count_nodes(), 3);
+}
+
+/// Test missing space between move number and move
+#[test]
+fn test_no_space_after_move_number() {
+    let pgn = "1.e4 e5 2.Nf3 Nc6 3.Bb5 *";
+
+    let tree = parse(pgn).unwrap();
+    assert_eq!(tree.count_nodes(), 5);
+}
+
+/// Test continuation move number style (1... for black's move)
+#[test]
+fn test_continuation_move_numbers() {
+    let pgn = "1. e4 1... e5 2. Nf3 2... Nc6 *";
+
+    let tree = parse(pgn).unwrap();
+    assert_eq!(tree.count_nodes(), 4);
+}
+
+/// Test mixed comment styles in same game
+#[test]
+fn test_mixed_comment_styles() {
+    let pgn = r#"[Event "Test"]
+[Result "*"]
+
+1. e4 {Brace comment} e5 ; Semicolon comment
+2. Nf3 {Another brace} Nc6 ; More semicolon
+*"#;
+
+    let tree = parse(pgn).unwrap();
+    // Should have comments on multiple moves
+    assert!(tree.count_comments() >= 2);
+}
+
+/// Test NAGs mixed with comments
+#[test]
+fn test_nags_with_comments() {
+    let pgn = "1. e4! {Great move!} e5? {Dubious} 2. Nf3!! {Brilliant} Nc6?? {Blunder} *";
+
+    let tree = parse(pgn).unwrap();
+    let e4 = tree.root.find_child("e4").unwrap();
+    assert!(!e4.nags.is_empty());
+    assert!(!e4.comment.is_empty());
+}
+
+/// Test empty header values
+#[test]
+fn test_empty_header_values() {
+    let pgn = r#"[Event ""]
+[Site ""]
+[White ""]
+[Black ""]
+[Result "*"]
+
+1. e4 *"#;
+
+    let tree = parse(pgn).unwrap();
+    assert_eq!(tree.header("Event"), Some(""));
+}
+
+/// Test very long header value
+#[test]
+fn test_long_header_value() {
+    let long_name = "A".repeat(500);
+    let pgn = format!(r#"[Event "{}"]
+[Result "*"]
+
+1. e4 *"#, long_name);
+
+    let tree = parse(&pgn).unwrap();
+    assert_eq!(tree.header("Event").unwrap().len(), 500);
+}
+
+/// Test game with no moves (headers only)
+#[test]
+fn test_headers_only() {
+    let pgn = r#"[Event "Unplayed"]
+[Site "?"]
+[Date "2024.01.01"]
+[Round "1"]
+[White "Player1"]
+[Black "Player2"]
+[Result "*"]
+
+*"#;
+
+    let tree = parse(pgn).unwrap();
+    assert_eq!(tree.count_nodes(), 0);
+    assert_eq!(tree.header("Event"), Some("Unplayed"));
+}
+
+/// Test multiple games - use parse_all to get all games
+#[test]
+fn test_multiple_games_parse_all() {
+    use pgnq::parser::parse_all;
+
+    let pgn = r#"[Event "Game 1"]
+[Result "1-0"]
+
+1. e4 e5 1-0
+
+[Event "Game 2"]
+[Result "0-1"]
+
+1. d4 d5 0-1"#;
+
+    // parse_all returns all games
+    let trees = parse_all(pgn).unwrap();
+    assert_eq!(trees.len(), 2);
+    assert_eq!(trees[0].header("Event"), Some("Game 1"));
+    assert_eq!(trees[1].header("Event"), Some("Game 2"));
+}
+
+/// Test PGN with BOM (Byte Order Mark)
+#[test]
+fn test_pgn_with_bom() {
+    let pgn = "\u{FEFF}[Event \"Test\"]\n[Result \"*\"]\n\n1. e4 *";
+
+    let tree = parse(pgn).unwrap();
+    // BOM should be handled gracefully
+    assert_eq!(tree.count_nodes(), 1);
+}

@@ -4,12 +4,19 @@ use crate::cli::InputSource;
 use crate::parser::parse;
 use anyhow::Result;
 use clap::Args;
+use std::fs;
+use std::io::{self, Write};
+use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct InfoArgs {
     /// Input PGN file (use '-' for stdin)
     #[arg(value_name = "FILE", default_value = "-")]
     pub input: InputSource,
+
+    /// Output file (default: stdout)
+    #[arg(short = 'o', long)]
+    pub output: Option<PathBuf>,
 
     /// Output as JSON
     #[arg(long)]
@@ -28,7 +35,7 @@ pub fn run(args: InfoArgs, _quiet: bool) -> Result<()> {
     let content = args.input.read_to_string()?;
     let tree = parse(&content)?;
 
-    if args.json {
+    let output_string = if args.json {
         let info = serde_json::json!({
             "file": args.input.display_name(),
             "headers": tree.headers,
@@ -41,39 +48,48 @@ pub fn run(args: InfoArgs, _quiet: bool) -> Result<()> {
             },
             "result": tree.result.as_str(),
         });
-        println!("{}", serde_json::to_string_pretty(&info)?);
-        return Ok(());
-    }
+        format!("{}\n", serde_json::to_string_pretty(&info)?)
+    } else {
+        // Text output
+        let mut out = String::new();
+        out.push_str(&format!("File: {}\n", args.input.display_name()));
+        out.push('\n');
 
-    // Text output
-    println!("File: {}", args.input.display_name());
-    println!();
+        out.push_str("Headers:\n");
+        let str = tree.seven_tag_roster();
+        out.push_str(&format!("  Event: {}\n", str.event));
+        out.push_str(&format!("  Site: {}\n", str.site));
+        out.push_str(&format!("  Date: {}\n", str.date));
+        out.push_str(&format!("  Round: {}\n", str.round));
+        out.push_str(&format!("  White: {}\n", str.white));
+        out.push_str(&format!("  Black: {}\n", str.black));
+        out.push_str(&format!("  Result: {}\n", str.result));
 
-    println!("Headers:");
-    let str = tree.seven_tag_roster();
-    println!("  Event: {}", str.event);
-    println!("  Site: {}", str.site);
-    println!("  Date: {}", str.date);
-    println!("  Round: {}", str.round);
-    println!("  White: {}", str.white);
-    println!("  Black: {}", str.black);
-    println!("  Result: {}", str.result);
-
-    // Print additional headers
-    for (key, value) in &tree.headers {
-        if !is_str_header(key) {
-            println!("  {}: {}", key, value);
+        // Print additional headers
+        for (key, value) in &tree.headers {
+            if !is_str_header(key) {
+                out.push_str(&format!("  {}: {}\n", key, value));
+            }
         }
-    }
 
-    if !args.headers_only {
-        println!();
-        println!("Statistics:");
-        println!("  Nodes: {}", tree.count_nodes());
-        println!("  Lines: {}", tree.count_lines());
-        println!("  Comments: {}", tree.count_comments());
-        println!("  Max depth: {}", tree.max_depth());
-        println!("  Main line length: {}", tree.main_line_length());
+        if !args.headers_only {
+            out.push('\n');
+            out.push_str("Statistics:\n");
+            out.push_str(&format!("  Nodes: {}\n", tree.count_nodes()));
+            out.push_str(&format!("  Lines: {}\n", tree.count_lines()));
+            out.push_str(&format!("  Comments: {}\n", tree.count_comments()));
+            out.push_str(&format!("  Max depth: {}\n", tree.max_depth()));
+            out.push_str(&format!("  Main line length: {}\n", tree.main_line_length()));
+        }
+
+        out
+    };
+
+    // Write output
+    if let Some(path) = args.output {
+        fs::write(&path, &output_string)?;
+    } else {
+        io::stdout().write_all(output_string.as_bytes())?;
     }
 
     Ok(())

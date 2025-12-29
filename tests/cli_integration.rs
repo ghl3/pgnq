@@ -507,6 +507,25 @@ fn test_cli_extract_deep_path() {
     assert!(stdout.len() > 0);
 }
 
+#[test]
+fn test_cli_extract_with_prefix() {
+    let pgn = "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 *";
+
+    // Without prefix - should start at Nf3
+    let (code, stdout, _) = run_pgnq(&["extract", "--path", "e4/e5/Nf3", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    assert!(!stdout.contains("1. e4"));
+    assert!(stdout.contains("Nf3"));
+
+    // With prefix - should include e4, e5 leading up to Nf3
+    let (code, stdout, _) =
+        run_pgnq(&["extract", "--path", "e4/e5/Nf3", "--with-prefix", "-"], Some(pgn));
+    assert_eq!(code, 0);
+    assert!(stdout.contains("1. e4"));
+    assert!(stdout.contains("e5"));
+    assert!(stdout.contains("Nf3"));
+}
+
 // ============================================================================
 // Filter Command Edge Cases
 // ============================================================================
@@ -578,4 +597,184 @@ fn test_cli_many_variations() {
     let (code, stdout, _) = run_pgnq(&["stats", "-"], Some(pgn));
     assert_eq!(code, 0);
     assert!(stdout.len() > 0);
+}
+
+// ============================================================================
+// Merge Command Tests
+// ============================================================================
+
+#[test]
+fn test_cli_merge_basic() {
+    // Create two temp files with different games
+    let mut file1 = NamedTempFile::new().expect("Failed to create temp file");
+    let mut file2 = NamedTempFile::new().expect("Failed to create temp file");
+
+    write!(file1, "1. e4 e5 *").expect("Failed to write");
+    write!(file2, "1. e4 c5 *").expect("Failed to write");
+    file1.flush().expect("Failed to flush");
+    file2.flush().expect("Failed to flush");
+
+    let (code, stdout, _) = run_pgnq(
+        &[
+            "merge",
+            file1.path().to_str().unwrap(),
+            file2.path().to_str().unwrap(),
+        ],
+        None,
+    );
+
+    assert_eq!(code, 0);
+    // Merged tree should contain both e5 and c5 as variations
+    assert!(stdout.contains("e4"));
+    assert!(stdout.contains("e5"));
+    assert!(stdout.contains("c5"));
+}
+
+#[test]
+fn test_cli_merge_overlapping_lines() {
+    let mut file1 = NamedTempFile::new().expect("Failed to create temp file");
+    let mut file2 = NamedTempFile::new().expect("Failed to create temp file");
+
+    // Same opening, different continuations
+    write!(file1, "1. e4 e5 2. Nf3 Nc6 *").expect("Failed to write");
+    write!(file2, "1. e4 e5 2. Nf3 Nf6 *").expect("Failed to write");
+    file1.flush().expect("Failed to flush");
+    file2.flush().expect("Failed to flush");
+
+    let (code, stdout, _) = run_pgnq(
+        &[
+            "merge",
+            file1.path().to_str().unwrap(),
+            file2.path().to_str().unwrap(),
+        ],
+        None,
+    );
+
+    assert_eq!(code, 0);
+    // Should have Nf3 once, with both Nc6 and Nf6 as children
+    assert!(stdout.contains("Nf3"));
+    assert!(stdout.contains("Nc6"));
+    assert!(stdout.contains("Nf6"));
+}
+
+#[test]
+fn test_cli_merge_preserves_variations() {
+    let mut file1 = NamedTempFile::new().expect("Failed to create temp file");
+    let mut file2 = NamedTempFile::new().expect("Failed to create temp file");
+
+    // First file has a variation
+    write!(file1, "1. e4 e5 (1... c5) *").expect("Failed to write");
+    write!(file2, "1. e4 d5 *").expect("Failed to write");
+    file1.flush().expect("Failed to flush");
+    file2.flush().expect("Failed to flush");
+
+    let (code, stdout, _) = run_pgnq(
+        &[
+            "merge",
+            file1.path().to_str().unwrap(),
+            file2.path().to_str().unwrap(),
+        ],
+        None,
+    );
+
+    assert_eq!(code, 0);
+    // Should preserve all variations
+    assert!(stdout.contains("e5"));
+    assert!(stdout.contains("c5"));
+    assert!(stdout.contains("d5"));
+}
+
+#[test]
+fn test_cli_merge_with_comments() {
+    let mut file1 = NamedTempFile::new().expect("Failed to create temp file");
+    let mut file2 = NamedTempFile::new().expect("Failed to create temp file");
+
+    write!(file1, "1. e4 {{First game}} e5 *").expect("Failed to write");
+    write!(file2, "1. e4 {{Second game}} c5 *").expect("Failed to write");
+    file1.flush().expect("Failed to flush");
+    file2.flush().expect("Failed to flush");
+
+    let (code, stdout, _) = run_pgnq(
+        &[
+            "merge",
+            file1.path().to_str().unwrap(),
+            file2.path().to_str().unwrap(),
+        ],
+        None,
+    );
+
+    assert_eq!(code, 0);
+    // Should preserve first comment (or merge them)
+    assert!(stdout.contains("e4"));
+}
+
+#[test]
+fn test_cli_merge_single_file() {
+    let mut file1 = NamedTempFile::new().expect("Failed to create temp file");
+    write!(file1, "1. e4 e5 *").expect("Failed to write");
+    file1.flush().expect("Failed to flush");
+
+    let (code, stdout, _) = run_pgnq(&["merge", file1.path().to_str().unwrap()], None);
+
+    assert_eq!(code, 0);
+    // Single file should just output the tree
+    assert!(stdout.contains("e4"));
+    assert!(stdout.contains("e5"));
+}
+
+#[test]
+fn test_cli_merge_three_files() {
+    let mut file1 = NamedTempFile::new().expect("Failed to create temp file");
+    let mut file2 = NamedTempFile::new().expect("Failed to create temp file");
+    let mut file3 = NamedTempFile::new().expect("Failed to create temp file");
+
+    write!(file1, "1. e4 e5 *").expect("Failed to write");
+    write!(file2, "1. e4 c5 *").expect("Failed to write");
+    write!(file3, "1. e4 d5 *").expect("Failed to write");
+    file1.flush().expect("Failed to flush");
+    file2.flush().expect("Failed to flush");
+    file3.flush().expect("Failed to flush");
+
+    let (code, stdout, _) = run_pgnq(
+        &[
+            "merge",
+            file1.path().to_str().unwrap(),
+            file2.path().to_str().unwrap(),
+            file3.path().to_str().unwrap(),
+        ],
+        None,
+    );
+
+    assert_eq!(code, 0);
+    // All three responses should be present
+    assert!(stdout.contains("e5"));
+    assert!(stdout.contains("c5"));
+    assert!(stdout.contains("d5"));
+}
+
+#[test]
+fn test_cli_merge_identical_games() {
+    let mut file1 = NamedTempFile::new().expect("Failed to create temp file");
+    let mut file2 = NamedTempFile::new().expect("Failed to create temp file");
+
+    // Identical games should merge without duplication
+    write!(file1, "1. e4 e5 2. Nf3 Nc6 *").expect("Failed to write");
+    write!(file2, "1. e4 e5 2. Nf3 Nc6 *").expect("Failed to write");
+    file1.flush().expect("Failed to flush");
+    file2.flush().expect("Failed to flush");
+
+    let (code, stdout, _) = run_pgnq(
+        &[
+            "merge",
+            file1.path().to_str().unwrap(),
+            file2.path().to_str().unwrap(),
+        ],
+        None,
+    );
+
+    assert_eq!(code, 0);
+    // Should have the moves but no duplicates
+    assert!(stdout.contains("e4"));
+    assert!(stdout.contains("Nf3"));
+    assert!(stdout.contains("Nc6"));
 }

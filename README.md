@@ -57,7 +57,7 @@ pgnq convert game.pgn --no-variations --no-comments -F minimal
 
 ```bash
 # Find all heavily annotated positions
-pgnq filter study.pgn --has-comment --has-nag "!" | pgnq tree
+pgnq filter study.pgn --commented --nag "!" | pgnq tree
 
 # Get statistics on variation depth
 pgnq stats study.pgn --json | jq '{
@@ -128,6 +128,7 @@ Display metadata and summary statistics about a PGN file. Shows the Seven Tag Ro
 
 | Flag | Description |
 |------|-------------|
+| `-o, --output FILE` | Write to file instead of stdout. |
 | `--json` | Output in JSON format for programmatic use |
 | `--headers-only` | Show only headers, skip statistics |
 | `--game N` | Select a specific game from a multi-game file (1-indexed) |
@@ -192,8 +193,10 @@ Visualize the game tree structure using Unicode box-drawing characters (or ASCII
 
 | Flag | Description |
 |------|-------------|
+| `-o, --output FILE` | Write to file instead of stdout. |
 | `-d, --depth N` | Maximum depth to display (default: 10). Limits how deep into the tree to render. |
 | `-p, --from-path PATH` | Start rendering from a specific node path instead of the root. |
+| `--json` | Output tree structure as JSON. |
 | `--show-comments` | Display comments (truncated) alongside moves. |
 | `--show-nags` | Display NAG annotations (!, ?, !!, etc.) with moves. |
 | `--ascii` | Use ASCII characters only (no Unicode box drawing). Useful for terminals without Unicode support. |
@@ -259,6 +262,7 @@ Display detailed statistics about a PGN file's tree structure. Provides comprehe
 
 | Flag | Description |
 |------|-------------|
+| `-o, --output FILE` | Write to file instead of stdout. |
 | `--json` | Output in JSON format for programmatic use. |
 | `--move-stats` | Include move frequency statistics (most common moves at each depth). |
 | `--comment-stats` | Include comment analysis (average length, positions with comments). |
@@ -544,8 +548,8 @@ Filter a PGN tree to include only nodes matching specific criteria. Can filter b
 | Flag | Description |
 |------|-------------|
 | `-p, --path PATH` | Filter to nodes matching this path pattern. Supports glob patterns (`*`, `**`). |
-| `--has-comment` | Include only nodes that have comments. |
-| `--has-nag NAG` | Include only nodes with a specific NAG (e.g., `!`, `?`, `!!`, `$1`). |
+| `--commented` | Include only nodes that have comments. |
+| `--nag NAG` | Include only nodes with a specific NAG (e.g., `!`, `?`, `!!`, `$1`). |
 | `--min-depth N` | Include only nodes at depth N or greater. |
 | `--max-depth N` | Include only nodes at depth N or less. |
 | `--main-line` | Output main line only (strip all variations). |
@@ -560,13 +564,13 @@ Filter a PGN tree to include only nodes matching specific criteria. Can filter b
 pgnq filter game.pgn --main-line
 
 # Find all positions with comments
-pgnq filter study.pgn --has-comment
+pgnq filter study.pgn --commented
 
 # Find all brilliant moves
-pgnq filter game.pgn --has-nag "!!"
+pgnq filter game.pgn --nag "!!"
 
 # Find all mistakes and blunders
-pgnq filter annotated.pgn --has-nag "?" | pgnq tree
+pgnq filter annotated.pgn --nag "?" | pgnq tree
 
 # Limit to opening moves (first 15 moves)
 pgnq filter game.pgn --max-depth 15
@@ -584,13 +588,13 @@ pgnq filter repertoire.pgn -p "e4/c5/**"
 pgnq filter openings.pgn -p "e4/*"
 
 # Find all UN-annotated positions
-pgnq filter study.pgn --has-comment --invert
+pgnq filter study.pgn --commented --invert
 
 # Chain filters
-pgnq filter study.pgn --has-comment | pgnq filter --has-nag "!" | pgnq tree
+pgnq filter study.pgn --commented | pgnq filter --nag "!" | pgnq tree
 
 # Output filtered results in Lichess format
-pgnq filter study.pgn --has-nag "!" -F lichess -o critical_moves.pgn
+pgnq filter study.pgn --nag "!" -F lichess -o critical_moves.pgn
 
 # Find deeply nested variations
 pgnq filter repertoire.pgn --min-depth 20 | pgnq stats --json | jq '.leaf_nodes'
@@ -780,12 +784,12 @@ pgnq merge repertoire/*.pgn | pgnq stats --json | jq '.max_depth'
 
 # Extract annotated lines from multiple studies
 for f in studies/*.pgn; do
-  pgnq filter "$f" --has-comment | pgnq convert -F minimal
+  pgnq filter "$f" --commented | pgnq convert -F minimal
 done > annotated_lines.pgn
 
 # Strip engine analysis but keep human comments
 pgnq convert study.pgn --strip-clocks --strip-evals --no-nags \
-  | pgnq filter --has-comment \
+  | pgnq filter --commented \
   > human_annotations_only.pgn
 
 # Split a database and summarize each part

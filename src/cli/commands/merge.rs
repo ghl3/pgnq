@@ -194,25 +194,14 @@ pub fn merge_trees(trees: &[GameTree], options: &MergeOptions) -> GameTree {
     result
 }
 
-/// Navigate to a node by index path (mutable)
+/// Navigate to a node given a path of child indices.
+/// Uses GameNode::navigate_path_mut for centralized path navigation.
 fn get_node_mut_by_path<'a>(root: &'a mut GameNode, path: &[usize]) -> &'a mut GameNode {
-    let mut current = root;
-    for &idx in path {
-        current = &mut current.children[idx];
-    }
-    current
+    root.navigate_path_mut(path)
 }
 
-/// Normalize SAN for comparison (strip move numbers, whitespace)
-fn normalize_san(san: &str) -> String {
-    let s = san.trim();
-    // Strip move number prefix like "1." or "1..."
-    if let Some(idx) = s.find(|c: char| c.is_ascii_alphabetic() || c == 'O') {
-        s[idx..].to_string()
-    } else {
-        s.to_string()
-    }
-}
+// Use centralized SAN normalization
+use crate::tree::san::normalize as normalize_san;
 
 /// Ordered hash map to preserve insertion order
 /// This ensures first-seen moves become main line
@@ -397,14 +386,7 @@ mod tests {
         assert_eq!(e4.children.len(), 2);
     }
 
-    #[test]
-    fn test_normalize_san() {
-        assert_eq!(normalize_san("1. e4"), "e4");
-        assert_eq!(normalize_san("1...e5"), "e5");
-        assert_eq!(normalize_san("Nf3"), "Nf3");
-        assert_eq!(normalize_san("O-O"), "O-O");
-        assert_eq!(normalize_san("  e4  "), "e4");
-    }
+    // SAN normalization tests moved to tree::san module
 
     #[test]
     fn test_merge_headers_from_first() {

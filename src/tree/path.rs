@@ -228,7 +228,7 @@ fn parse_move_segment(s: &str) -> Result<PathSegment, Error> {
     };
 
     // Strip move number prefix if present
-    let san = strip_move_number(move_part);
+    let san = super::san::normalize(move_part);
 
     Ok(PathSegment::Move {
         san,
@@ -236,21 +236,8 @@ fn parse_move_segment(s: &str) -> Result<PathSegment, Error> {
     })
 }
 
-/// Strip move number prefix like "1." or "1..." from a move
-fn strip_move_number(s: &str) -> String {
-    let s = s.trim();
-    // Find first alphabetic char or O (for castling)
-    if let Some(idx) = s.find(|c: char| c.is_ascii_alphabetic() || c == 'O') {
-        s[idx..].to_string()
-    } else {
-        s.to_string()
-    }
-}
-
-/// Check if two moves match (normalized comparison)
-fn moves_match(san1: &str, san2: &str) -> bool {
-    strip_move_number(san1) == strip_move_number(san2)
-}
+// Use centralized SAN utilities
+use super::san::moves_match;
 
 #[cfg(test)]
 mod tests {
@@ -414,51 +401,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Move Number Stripping Tests
-    // ========================================================================
-
-    #[test]
-    fn test_strip_move_number() {
-        assert_eq!(strip_move_number("1. e4"), "e4");
-        assert_eq!(strip_move_number("1...e5"), "e5");
-        assert_eq!(strip_move_number("Nf3"), "Nf3");
-        assert_eq!(strip_move_number("O-O"), "O-O");
-    }
-
-    #[test]
-    fn test_strip_move_number_various_formats() {
-        assert_eq!(strip_move_number("1.e4"), "e4");
-        assert_eq!(strip_move_number("1. e4"), "e4");
-        assert_eq!(strip_move_number("1 e4"), "e4");
-        assert_eq!(strip_move_number("10. e4"), "e4");
-        assert_eq!(strip_move_number("100. e4"), "e4");
-        assert_eq!(strip_move_number("10...e5"), "e5");
-    }
-
-    #[test]
-    fn test_strip_move_number_castling() {
-        assert_eq!(strip_move_number("5. O-O"), "O-O");
-        assert_eq!(strip_move_number("10. O-O-O"), "O-O-O");
-    }
-
-    #[test]
-    fn test_strip_move_number_with_check() {
-        assert_eq!(strip_move_number("15. Qxf7+"), "Qxf7+");
-        assert_eq!(strip_move_number("20. Qxf7#"), "Qxf7#");
-    }
-
-    #[test]
-    fn test_moves_match() {
-        assert!(moves_match("e4", "e4"));
-        assert!(moves_match("1. e4", "e4"));
-        assert!(moves_match("e4", "1. e4"));
-        assert!(moves_match("1. e4", "1. e4"));
-        assert!(moves_match("1...e5", "e5"));
-        assert!(!moves_match("e4", "e5"));
-    }
-
-    // ========================================================================
-    // Path Resolution Tests
+    // Path Resolution Tests (SAN normalization tests moved to san.rs)
     // ========================================================================
 
     #[test]
