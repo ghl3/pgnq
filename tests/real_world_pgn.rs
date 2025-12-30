@@ -500,18 +500,26 @@ fn test_arena_game_complete() {
     let tree = parse(ARENA_GAME).unwrap();
 
     // Check headers
-    assert_eq!(tree.header("Termination"), Some("adjudication"));
-    assert_eq!(tree.header("WhiteType"), Some("program"));
-    assert_eq!(tree.header("BlackType"), Some("program"));
+    assert_headers!(tree, {
+        "Termination" => "adjudication",
+        "WhiteType" => "program",
+        "BlackType" => "program",
+    });
     assert_eq!(tree.result, GameResult::WhiteWins);
 
-    // Check engine-style comments
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(e4.comment.contains("/25"), "e4 should have depth");
-    assert!(e4.comment.contains("0.5s"), "e4 should have time");
-
-    let e5 = e4.find_child("e5").unwrap();
-    assert!(e5.comment.contains("/24"));
+    // Verify structure with engine-style depth/time comments
+    let expected = game_tree! {
+        e4 (comment: "+0.25/25 0.5s") {
+            e5 (comment: "+0.30/24 0.4s") {
+                Nf3 (comment: "+0.28/26 0.6s") {
+                    Nc6 (comment: "+0.32/25 0.5s") {
+                        Bb5 (comment: "+0.30/27 0.7s")
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 // ============================================================================
@@ -759,9 +767,17 @@ fn test_mixed_comment_styles() {
 
     assert_eq!(tree.result, GameResult::Ongoing);
 
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(!e4.comment.is_empty());
-    assert!(e4.comment.contains("Brace"));
+    // Note: semicolon comments are line comments, so they may not be preserved on moves
+    let expected = game_tree! {
+        e4 (comment: "Brace comment") {
+            e5 {
+                Nf3 (comment: "Another brace") {
+                    Nc6
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 /// Test NAGs mixed with comments
@@ -773,19 +789,16 @@ fn test_nags_with_comments() {
 
     assert_eq!(tree.result, GameResult::Ongoing);
 
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(e4.nags.contains(&Nag::GOOD_MOVE));
-    assert!(e4.comment.contains("Great"));
-
-    let e5 = e4.find_child("e5").unwrap();
-    assert!(e5.nags.contains(&Nag::POOR_MOVE));
-    assert!(e5.comment.contains("Dubious"));
-
-    let nf3 = e5.find_child("Nf3").unwrap();
-    assert!(nf3.nags.contains(&Nag::BRILLIANT_MOVE));
-
-    let nc6 = nf3.find_child("Nc6").unwrap();
-    assert!(nc6.nags.contains(&Nag::BLUNDER));
+    let expected = game_tree! {
+        e4 (comment: "Great move!", nag: GOOD_MOVE) {
+            e5 (comment: "Dubious", nag: POOR_MOVE) {
+                Nf3 (comment: "Brilliant", nag: BRILLIANT_MOVE) {
+                    Nc6 (comment: "Blunder", nag: BLUNDER)
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 /// Test empty header values
@@ -1058,18 +1071,89 @@ fn test_long_game_with_annotations() {
     let tree = parse(pgn).unwrap();
 
     assert_eq!(tree.result, GameResult::Ongoing);
+    assert_eq!(tree.count_nodes(), 39);
 
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(e4.nags.contains(&Nag::GOOD_MOVE));
-
-    let e5 = e4.find_child("e5").unwrap();
-    let nf3 = e5.find_child("Nf3").unwrap();
-    let nc6 = nf3.find_child("Nc6").unwrap();
-    let bb5 = nc6.find_child("Bb5").unwrap();
-    assert!(bb5.comment.contains("Ruy Lopez"));
-
-    // Verify node count is substantial
-    assert!(tree.count_nodes() >= 38, "Should have at least 38 moves");
+    // Verify complete game structure with all annotations
+    let expected = game_tree! {
+        e4 (nag: GOOD_MOVE) {
+            e5 {
+                Nf3 {
+                    Nc6 {
+                        Bb5 (comment: "Ruy Lopez") {
+                            a6 {
+                                Ba4 {
+                                    Nf6 {
+                                        "O-O" {
+                                            Be7 {
+                                                Re1 {
+                                                    b5 {
+                                                        Bb3 {
+                                                            d6 {
+                                                                c3 {
+                                                                    "O-O" {
+                                                                        h3 (comment: "Preventing ...Bg4") {
+                                                                            Nb8 {
+                                                                                d4 {
+                                                                                    Nbd7 {
+                                                                                        Nbd2 {
+                                                                                            Bb7 {
+                                                                                                Bc2 {
+                                                                                                    Re8 {
+                                                                                                        Nf1 {
+                                                                                                            Bf8 {
+                                                                                                                Ng3 {
+                                                                                                                    g6 {
+                                                                                                                        Bg5 {
+                                                                                                                            h6 {
+                                                                                                                                Bd2 {
+                                                                                                                                    Bg7 {
+                                                                                                                                        a4 {
+                                                                                                                                            c5 {
+                                                                                                                                                d5 (comment: "Space advantage", nag: GOOD_MOVE) {
+                                                                                                                                                    c4 (nag: GOOD_MOVE) {
+                                                                                                                                                        b4 (nag: GOOD_MOVE) {
+                                                                                                                                                            cxb3 (nag: WHITE_SLIGHT_ADVANTAGE) {
+                                                                                                                                                                Bxb3
+                                                                                                                                                            }
+                                                                                                                                                        }
+                                                                                                                                                    }
+                                                                                                                                                }
+                                                                                                                                            }
+                                                                                                                                        }
+                                                                                                                                    }
+                                                                                                                                }
+                                                                                                                            }
+                                                                                                                        }
+                                                                                                                    }
+                                                                                                                }
+                                                                                                            }
+                                                                                                        }
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 /// Test multiple sibling variations each with their own annotations
@@ -1171,11 +1255,31 @@ fn test_stress_many_variations_per_move() {
 
     let tree = parse(pgn).unwrap();
 
-    // First move should have many alternatives
-    assert!(tree.root.children.len() >= 10);
-    // e4's replies should have many alternatives
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(e4.children.len() >= 8);
+    // Verify complete structure with all variations at root and under e4
+    let expected = game_tree! {
+        e4 {
+            e5 { Nf3 },
+            c5,
+            e6,
+            c6,
+            d6,
+            g6,
+            d5,
+            Nf6,
+            Nc6
+        },
+        d4,
+        c4,
+        Nf3,
+        g3,
+        b3,
+        f4,
+        e3,
+        d3,
+        c3,
+        Nc3
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 /// Test game with annotations on every move
@@ -1187,12 +1291,31 @@ fn test_stress_heavily_annotated() {
 
     let tree = parse(pgn).unwrap();
 
-    // Every move should have annotations
-    for node in tree.root.iter_main_line().skip(1) {
-        assert!(
-            !node.nags.is_empty() || !node.comment.is_empty(),
-            "Move {} should have annotation",
-            node.san
-        );
-    }
+    // Verify complete structure with all annotations
+    let expected = game_tree! {
+        e4 (comment: "Opening", nag: GOOD_MOVE) {
+            e5 (comment: "Passive", nag: POOR_MOVE) {
+                Nf3 (comment: "Developing", nag: BRILLIANT_MOVE) {
+                    Nc6 (comment: "Error", nag: BLUNDER) {
+                        Bb5 (comment: "Lopez", nag: INTERESTING_MOVE) {
+                            a6 (comment: "Defense", nag: DUBIOUS_MOVE) {
+                                Ba4 (comment: "Retreat", nag: GOOD_MOVE) {
+                                    Nf6 (comment: "Counter", nag: POOR_MOVE) {
+                                        "O-O" (comment: "Castle", nag: BRILLIANT_MOVE) {
+                                            Be7 (comment: "Develop", nag: BLUNDER) {
+                                                Re1 (comment: "Central", nag: INTERESTING_MOVE) {
+                                                    b5 (comment: "Push", nag: DUBIOUS_MOVE)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }

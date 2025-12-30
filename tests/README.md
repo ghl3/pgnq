@@ -106,6 +106,13 @@ let tree = game_tree! {
 
 // String literals for special moves
 let tree = game_tree! { e4 { e5 { Nf3 { Nc6 { "O-O" } } } } };
+
+// Multiple first moves (root-level siblings)
+let tree = game_tree! {
+    e4 { e5 { Nf3 } },
+    d4,
+    c4
+};
 ```
 
 ## Assertion Macros

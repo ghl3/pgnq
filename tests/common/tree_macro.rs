@@ -118,6 +118,46 @@ macro_rules! game_tree {
         root
     }};
 
+    // === Multiple root-level children (siblings) ===
+    // These patterns handle comma-separated entries at the top level
+    // We need specific patterns to avoid ambiguity with single-node patterns
+
+    // Identifier with children, followed by comma and more siblings
+    ($name:ident { $($inner:tt)* } , $($rest:tt)+) => {{
+        let mut root = pgnq::tree::GameNode::root();
+        let child = root.add_child(pgnq::tree::GameNode::new(stringify!($name)));
+        $crate::game_tree!(@children child; $($inner)*);
+        $crate::game_tree!(@children root; $($rest)+);
+        root
+    }};
+
+    // Identifier with properties and children, followed by comma and more siblings
+    ($name:ident ( $($key:ident : $val:tt),* $(,)? ) { $($inner:tt)* } , $($rest:tt)+) => {{
+        let mut root = pgnq::tree::GameNode::root();
+        let child = root.add_child(pgnq::tree::GameNode::new(stringify!($name)));
+        $($crate::game_tree!(@prop child, $key, $val);)*
+        $crate::game_tree!(@children child; $($inner)*);
+        $crate::game_tree!(@children root; $($rest)+);
+        root
+    }};
+
+    // Identifier with properties only, followed by comma and more siblings
+    ($name:ident ( $($key:ident : $val:tt),* $(,)? ) , $($rest:tt)+) => {{
+        let mut root = pgnq::tree::GameNode::root();
+        let child = root.add_child(pgnq::tree::GameNode::new(stringify!($name)));
+        $($crate::game_tree!(@prop child, $key, $val);)*
+        $crate::game_tree!(@children root; $($rest)+);
+        root
+    }};
+
+    // Simple identifier, followed by comma and more siblings
+    ($name:ident , $($rest:tt)+) => {{
+        let mut root = pgnq::tree::GameNode::root();
+        root.add_child(pgnq::tree::GameNode::new(stringify!($name)));
+        $crate::game_tree!(@children root; $($rest)+);
+        root
+    }};
+
     // === Internal: Process children ===
 
     // Empty children
@@ -468,5 +508,32 @@ mod tests {
         };
         assert_eq!(tree.children[0].comment, "test");
         assert_eq!(tree.children[0].nags, vec![Nag::GOOD_MOVE]);
+    }
+
+    #[test]
+    fn test_multiple_root_children() {
+        // Tests that multiple first moves can be specified at root level
+        let tree = game_tree! {
+            e4 { e5 },
+            d4,
+            c4
+        };
+        assert_eq!(tree.children.len(), 3);
+        assert_eq!(tree.children[0].san, "e4");
+        assert_eq!(tree.children[0].children[0].san, "e5");
+        assert_eq!(tree.children[1].san, "d4");
+        assert_eq!(tree.children[2].san, "c4");
+    }
+
+    #[test]
+    fn test_multiple_root_children_with_properties() {
+        let tree = game_tree! {
+            e4 (comment: "King's Pawn") { e5 },
+            d4 (comment: "Queen's Pawn"),
+            c4
+        };
+        assert_eq!(tree.children.len(), 3);
+        assert_eq!(tree.children[0].comment, "King's Pawn");
+        assert_eq!(tree.children[1].comment, "Queen's Pawn");
     }
 }

@@ -850,16 +850,16 @@ fn test_roundtrip_nags_in_variations() {
     let serialized = to_pgn(&tree1, &options);
     let tree2 = parse(&serialized).unwrap();
 
-    // Find c5 in the variation
-    let e4 = tree2.root.find_child("e4").unwrap();
-    let c5 = e4.find_child("c5").unwrap();
-    assert!(c5.nags.contains(&Nag::GOOD_MOVE), "c5 in variation should have !");
-
-    let nf3_var = c5.find_child("Nf3").unwrap();
-    assert!(
-        nf3_var.nags.contains(&Nag::WHITE_SLIGHT_ADVANTAGE),
-        "Nf3 in variation should have $14"
-    );
+    // Verify structure with NAGs in variations preserved
+    let expected = game_tree! {
+        e4 {
+            e5 { Nf3 },
+            c5 (comment: "Sicilian", nag: GOOD_MOVE) {
+                Nf3 (nag: WHITE_SLIGHT_ADVANTAGE)
+            }
+        }
+    };
+    assert_contains_tree!(tree2, expected);
 }
 
 /// Test uncommon NAG values (those without symbols) roundtrip

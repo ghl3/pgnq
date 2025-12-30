@@ -290,8 +290,13 @@ and contains various information} e5 *"#;
 #[test]
 fn test_parse_multiline_comment() {
     let tree = parse_pgn(MULTILINE_COMMENT);
-    let e4 = tree.root.find_child("e4").expect("e4 should exist");
-    assert!(e4.comment.contains("longer comment"), "Comment should contain 'longer comment'");
+
+    let expected = game_tree! {
+        e4 (comment: "This is a longer comment\nthat spans multiple lines\nand contains various information") {
+            e5
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 const EMPTY_COMMENT: &str = "1. e4 {} e5 *";
@@ -344,8 +349,6 @@ const SYMBOLIC_NAGS: &str = "1. e4! e5? 2. Nf3!! Nc6?? 3. Bb5!? a6?! *";
 #[test]
 fn test_parse_symbolic_nags() {
     let tree = parse_pgn(SYMBOLIC_NAGS);
-    let e4 = tree.root.find_child("e4").expect("e4 should exist");
-    assert!(e4.nags.contains(&Nag::GOOD_MOVE), "e4 should have GOOD_MOVE NAG");
 
     // Verify NAGs throughout the tree
     let expected = game_tree! {
@@ -369,8 +372,22 @@ const NUMERIC_NAGS: &str = "1. e4 $1 e5 $2 2. Nf3 $3 Nc6 $4 3. Bb5 $5 a6 $6 *";
 #[test]
 fn test_parse_numeric_nags() {
     let tree = parse_pgn(NUMERIC_NAGS);
-    let e4 = tree.root.find_child("e4").expect("e4 should exist");
-    assert!(!e4.nags.is_empty(), "e4 should have at least one NAG");
+
+    // Verify numeric NAG codes are parsed correctly
+    let expected = game_tree! {
+        e4 (nag: GOOD_MOVE) {
+            e5 (nag: POOR_MOVE) {
+                Nf3 (nag: BRILLIANT_MOVE) {
+                    Nc6 (nag: BLUNDER) {
+                        Bb5 (nag: INTERESTING_MOVE) {
+                            a6 (nag: DUBIOUS_MOVE)
+                        }
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 const POSITIONAL_NAGS: &str = "1. e4 $14 e5 $15 2. Nf3 $16 Nc6 $17 3. Bb5 $18 a6 $19 *";
@@ -378,7 +395,22 @@ const POSITIONAL_NAGS: &str = "1. e4 $14 e5 $15 2. Nf3 $16 Nc6 $17 3. Bb5 $18 a6
 #[test]
 fn test_parse_positional_nags() {
     let tree = parse_pgn(POSITIONAL_NAGS);
-    assert!(count_nodes(&tree) > 0);
+
+    // Verify positional evaluation NAGs
+    let expected = game_tree! {
+        e4 (nag: WHITE_SLIGHT_ADVANTAGE) {
+            e5 (nag: BLACK_SLIGHT_ADVANTAGE) {
+                Nf3 (nag: WHITE_MODERATE_ADVANTAGE) {
+                    Nc6 (nag: BLACK_MODERATE_ADVANTAGE) {
+                        Bb5 (nag: WHITE_DECISIVE_ADVANTAGE) {
+                            a6 (nag: BLACK_DECISIVE_ADVANTAGE)
+                        }
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 const MULTIPLE_NAGS: &str = "1. e4! $14 e5 $2 $17 2. Nf3 *";
@@ -386,8 +418,16 @@ const MULTIPLE_NAGS: &str = "1. e4! $14 e5 $2 $17 2. Nf3 *";
 #[test]
 fn test_parse_multiple_nags() {
     let tree = parse_pgn(MULTIPLE_NAGS);
-    let e4 = tree.root.find_child("e4").expect("e4 should exist");
-    assert!(e4.nags.len() >= 1, "e4 should have at least one NAG");
+
+    // Verify multiple NAGs on same moves
+    let expected = game_tree! {
+        e4 (nags: [GOOD_MOVE, WHITE_SLIGHT_ADVANTAGE]) {
+            e5 (nags: [POOR_MOVE, BLACK_MODERATE_ADVANTAGE]) {
+                Nf3
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 #[test_case("1. e4! *" => 1; "good move")]
