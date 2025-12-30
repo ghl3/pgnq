@@ -43,29 +43,43 @@ fn test_lichess_game_complete() {
     let tree = parse(LICHESS_GAME).unwrap();
 
     // Check headers
-    assert_eq!(tree.header("Event"), Some("Rated Blitz game"));
-    assert_eq!(tree.header("White"), Some("Player1"));
-    assert_eq!(tree.header("Black"), Some("Player2"));
-    assert_eq!(tree.header("WhiteElo"), Some("1500"));
-    assert_eq!(tree.header("BlackElo"), Some("1450"));
-    assert_eq!(tree.header("ECO"), Some("B20"));
-    assert_eq!(tree.header("Opening"), Some("Sicilian Defense"));
+    assert_headers!(tree, {
+        "Event" => "Rated Blitz game",
+        "White" => "Player1",
+        "Black" => "Player2",
+        "WhiteElo" => "1500",
+        "BlackElo" => "1450",
+        "ECO" => "B20",
+        "Opening" => "Sicilian Defense",
+    });
 
     // Check result and node count
     assert_eq!(tree.result, GameResult::WhiteWins);
     assert_eq!(tree.count_nodes(), 10);
 
-    // Check main line
-    let main_line: Vec<_> = tree.root.iter_main_line().skip(1).map(|n| n.san.as_str()).collect();
-    assert_eq!(main_line, vec!["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "a6"]);
-
-    // Check clock annotations
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(e4.comment.contains("%clk"), "e4 should have clock annotation");
-    let c5 = e4.find_child("c5").unwrap();
-    assert!(c5.comment.contains("%clk"), "c5 should have clock annotation");
-    let nf3 = c5.find_child("Nf3").unwrap();
-    assert!(nf3.comment.contains("%clk"), "Nf3 should have clock annotation");
+    // Verify complete tree structure with clock annotations
+    let expected = game_tree! {
+        e4 (comment: "%clk") {
+            c5 (comment: "%clk") {
+                Nf3 (comment: "%clk") {
+                    d6 (comment: "%clk") {
+                        d4 (comment: "%clk") {
+                            cxd4 (comment: "%clk") {
+                                Nxd4 (comment: "%clk") {
+                                    Nf6 (comment: "%clk") {
+                                        Nc3 (comment: "%clk") {
+                                            a6 (comment: "%clk")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 // ============================================================================
@@ -102,25 +116,40 @@ fn test_chesscom_game_complete() {
     let tree = parse(CHESSCOM_GAME).unwrap();
 
     // Check headers
-    assert_eq!(tree.header("Event"), Some("Live Chess"));
-    assert_eq!(tree.header("Site"), Some("Chess.com"));
-    assert_eq!(tree.header("Termination"), Some("Game drawn by agreement"));
-    assert_eq!(tree.header("WhiteElo"), Some("1200"));
-    assert_eq!(tree.header("BlackElo"), Some("1250"));
+    assert_headers!(tree, {
+        "Event" => "Live Chess",
+        "Site" => "Chess.com",
+        "Termination" => "Game drawn by agreement",
+        "WhiteElo" => "1200",
+        "BlackElo" => "1250",
+    });
 
     // Check result and node count
     assert_eq!(tree.result, GameResult::Draw);
     assert_eq!(tree.count_nodes(), 9);
 
-    // Check main line
-    let main_line: Vec<_> = tree.root.iter_main_line().skip(1).map(|n| n.san.as_str()).collect();
-    assert_eq!(main_line, vec!["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O"]);
+    // Verify complete Ruy Lopez structure with fractional clock annotations
+    let expected = game_tree! {
+        e4 (comment: "%clk") {
+            e5 (comment: "9:55.2") {
+                Nf3 (comment: "%clk") {
+                    Nc6 (comment: "%clk") {
+                        Bb5 (comment: "%clk") {
+                            a6 (comment: "%clk") {
+                                Ba4 (comment: "%clk") {
+                                    Nf6 (comment: "%clk")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 
-    // Verify fractional clocks (Chess.com uses decimal seconds)
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(e4.comment.contains("."), "e4 should have fractional seconds");
-    let e5 = e4.find_child("e5").unwrap();
-    assert!(e5.comment.contains("9:55.2"), "e5 should have specific clock time");
+    // Verify castling at the end (O-O has hyphen, use find_path)
+    assert!(tree.find_path(&["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O"]).is_some());
 }
 
 // ============================================================================
@@ -163,47 +192,62 @@ fn test_annotated_game_complete() {
     let tree = parse(ANNOTATED_GAME).unwrap();
 
     // Check headers
-    assert_eq!(tree.header("Event"), Some("World Championship"));
-    assert_eq!(tree.header("White"), Some("Carlsen, Magnus"));
-    assert_eq!(tree.header("Black"), Some("Caruana, Fabiano"));
-    assert_eq!(tree.header("Annotator"), Some("GM John Doe"));
-    assert_eq!(tree.header("ECO"), Some("B33"));
+    assert_headers!(tree, {
+        "Event" => "World Championship",
+        "White" => "Carlsen, Magnus",
+        "Black" => "Caruana, Fabiano",
+        "Annotator" => "GM John Doe",
+        "ECO" => "B33",
+    });
     assert_eq!(tree.result, GameResult::Draw);
 
-    // Navigate to verify tree structure with annotations
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(e4.nags.contains(&Nag::GOOD_MOVE), "e4 should have !");
-    assert!(e4.comment.contains("king's pawn"), "e4 should have comment");
+    // Verify complete tree structure with annotations
+    let expected = game_tree! {
+        e4 (comment: "king's pawn", nag: GOOD_MOVE) {
+            c5 (comment: "Sicilian") {
+                Nf3 (nag: GOOD_MOVE) {
+                    Nc6 (comment: "develops") {
+                        d4 (comment: "center") {
+                            cxd4 {
+                                Nxd4 {
+                                    Nf6 {
+                                        Nc3 {
+                                            e5 (comment: "Sveshnikov", nag: DUBIOUS_MOVE) {
+                                                Ndb5 {
+                                                    d6 {
+                                                        Bg5 {
+                                                            a6 {
+                                                                Na3 {
+                                                                    b5 (nag: INTERESTING_MOVE) {
+                                                                        Bxf6 {
+                                                                            gxf6
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            d6 (comment: "Najdorf") {
+                                                Be2 {
+                                                    e6
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 
-    let c5 = e4.find_child("c5").unwrap();
-    assert!(c5.comment.contains("Sicilian"), "c5 should mention Sicilian");
-
-    let nf3 = c5.find_child("Nf3").unwrap();
-    assert!(!nf3.nags.is_empty(), "Nf3 should have NAG ($1)");
-
-    let nc6 = nf3.find_child("Nc6").unwrap();
-    let d4 = nc6.find_child("d4").unwrap();
-    let cxd4 = d4.find_child("cxd4").unwrap();
-    let nxd4 = cxd4.find_child("Nxd4").unwrap();
-    let nf6 = nxd4.find_child("Nf6").unwrap();
-    let nc3 = nf6.find_child("Nc3").unwrap();
-
-    // Nc3 should have variations (e5 main + d6 variation)
-    assert!(nc3.has_variations(), "Nc3 should have variations");
-
-    // Main line continues with e5 (Sveshnikov)
-    let e5 = nc3.find_child("e5").unwrap();
-    assert!(!e5.nags.is_empty(), "e5 should have NAG (?!)");
-    assert!(e5.comment.contains("Sveshnikov"), "e5 should mention Sveshnikov");
-
-    // Verify the Najdorf variation exists
-    let d6_var = nc3.children.iter().find(|n| n.san == "d6").expect("d6 variation should exist");
-    assert!(d6_var.comment.contains("Najdorf"), "d6 should mention Najdorf");
-
-    let be2 = d6_var.find_child("Be2").unwrap();
-    let e6 = be2.find_child("e6").unwrap();
-    let castle = e6.find_child("O-O").unwrap();
-    assert!(!castle.nags.is_empty(), "O-O should have NAG ($14)");
+    // Verify castling in the Najdorf variation (O-O has hyphen, use find_path)
+    assert!(tree.find_path(&["e4", "c5", "Nf3", "Nc6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "d6", "Be2", "e6", "O-O"]).is_some());
 }
 
 // ============================================================================
@@ -229,39 +273,73 @@ fn test_lichess_study_complete() {
     let tree = parse(LICHESS_STUDY).unwrap();
 
     // Check headers
-    assert_eq!(tree.header("Chapter"), Some("Introduction to the Sicilian"));
-    assert_eq!(tree.header("ECO"), Some("B20"));
+    assert_headers!(tree, {
+        "Chapter" => "Introduction to the Sicilian",
+        "ECO" => "B20",
+    });
     assert_eq!(tree.result, GameResult::Ongoing);
 
-    // Check main line structure
-    let e4 = tree.root.find_child("e4").unwrap();
-    let c5 = e4.find_child("c5").unwrap();
-    assert!(c5.comment.contains("Sicilian Defense"));
-    assert!(c5.has_variations(), "c5 should have variations for white's 2nd move");
-
-    // Main line continues with Nf3
-    let nf3 = c5.find_child("Nf3").unwrap();
-    let d6 = nf3.find_child("d6").unwrap();
-    let d4 = d6.find_child("d4").unwrap();
-    let cxd4 = d4.find_child("cxd4").unwrap();
-    let nxd4 = cxd4.find_child("Nxd4").unwrap();
-    let nf6 = nxd4.find_child("Nf6").unwrap();
-    let nc3 = nf6.find_child("Nc3").unwrap();
-
-    // Nc3 has variations for black's response
-    assert!(nc3.has_variations());
-    let a6 = nc3.find_child("a6").unwrap();
-    assert!(a6.comment.contains("Najdorf"));
-
-    // Check Najdorf alternatives
-    assert!(nc3.children.iter().any(|n| n.san == "e6" && n.comment.contains("Scheveningen")));
-    assert!(nc3.children.iter().any(|n| n.san == "g6" && n.comment.contains("Dragon")));
-    assert!(nc3.children.iter().any(|n| n.san == "Nc6" && n.comment.contains("Classical")));
-
-    // Check variations at move 2
-    assert!(c5.children.iter().any(|n| n.san == "Nc3" && n.comment.contains("Closed")));
-    assert!(c5.children.iter().any(|n| n.san == "c3" && n.comment.contains("Alapin")));
-    assert!(c5.children.iter().any(|n| n.san == "f4" && n.comment.contains("Grand Prix")));
+    // Verify complete study structure with main line and all variations
+    let expected = game_tree! {
+        e4 {
+            c5 (comment: "Sicilian Defense") {
+                Nf3 {
+                    d6 {
+                        d4 {
+                            cxd4 {
+                                Nxd4 {
+                                    Nf6 {
+                                        Nc3 {
+                                            a6 (comment: "Najdorf"),
+                                            e6 (comment: "Scheveningen"),
+                                            g6 (comment: "Dragon"),
+                                            Nc6 (comment: "Classical")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Nc3 (comment: "Closed") {
+                    Nc6 {
+                        g3 {
+                            g6 {
+                                Bg2 {
+                                    Bg7 {
+                                        d3 {
+                                            d6
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                c3 (comment: "Alapin") {
+                    Nf6 {
+                        e5 {
+                            Nd5 {
+                                d4 {
+                                    cxd4 {
+                                        cxd4
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                f4 (comment: "Grand Prix") {
+                    d5 {
+                        exd5 {
+                            Nf6
+                        }
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 // ============================================================================
@@ -925,19 +1003,48 @@ Nc6 3. Bc4 {Italian Game} Bc5 4. c3 Nf6 5. d4! exd4 $14 6. cxd4 Bb4+?! 1-0"#;
 
     let tree = parse(pgn).unwrap();
 
-    assert_eq!(tree.header("Event"), Some("Comprehensive Test"));
-    assert_eq!(tree.header("ECO"), Some("C50"));
-    assert_eq!(tree.header("Annotator"), Some("Engine"));
+    assert_headers!(tree, {
+        "Event" => "Comprehensive Test",
+        "ECO" => "C50",
+        "Annotator" => "Engine",
+    });
     assert_eq!(tree.result, GameResult::WhiteWins);
 
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(e4.nags.contains(&Nag::GOOD_MOVE));
-    assert!(e4.comment.contains("%eval"));
-    assert!(e4.comment.contains("%clk"));
+    // Verify complete structure with all annotation types
+    let expected = game_tree! {
+        e4 (comment: "%eval", nag: GOOD_MOVE) {
+            e5 (nags: [POOR_MOVE, BLACK_MODERATE_ADVANTAGE]) {
+                Nf3 (comment: "Developing", nag: BRILLIANT_MOVE) {
+                    Nc6 {
+                        Bc4 (comment: "Italian Game") {
+                            Bc5 {
+                                c3 {
+                                    Nf6 {
+                                        d4 (nag: GOOD_MOVE) {
+                                            exd4 {
+                                                cxd4
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Bc4 (comment: "Italian setup", nag: INTERESTING_MOVE) {
+                    Nc6
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 
-    let e5 = e4.find_child("e5").unwrap();
-    assert!(e5.nags.contains(&Nag::POOR_MOVE));
-    assert!(!e5.nags.is_empty()); // Should have $17 too
+    // Verify last move with check (string literal for Bb4+)
+    assert!(tree.find_path(&["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6", "d4", "exd4", "cxd4", "Bb4+"]).is_some());
+
+    // Verify e4 has clock annotation too
+    let e4 = tree.root.find_child("e4").unwrap();
+    assert!(e4.comment.contains("%clk"));
 }
 
 /// Test very long main line with annotations throughout
@@ -976,34 +1083,27 @@ fn test_many_annotated_variations() {
 
     assert_eq!(tree.result, GameResult::Ongoing);
 
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(e4.has_variations());
-
-    // Main line
-    let c5 = e4.find_child("c5").unwrap();
-    let nf3 = c5.find_child("Nf3").unwrap();
-    assert!(nf3.find_child("d6").is_some());
-
-    // Variations
-    let e5_var = e4.children.iter().find(|n| n.san == "e5").unwrap();
-    assert!(e5_var.nags.contains(&Nag::GOOD_MOVE));
-    assert!(e5_var.comment.contains("King's Pawn"));
-
-    let e6_var = e4.children.iter().find(|n| n.san == "e6").unwrap();
-    assert!(e6_var.comment.contains("French"));
-
-    let c6_var = e4.children.iter().find(|n| n.san == "c6").unwrap();
-    assert!(c6_var.comment.contains("Caro-Kann"));
-
-    let d5_var = e4.children.iter().find(|n| n.san == "d5").unwrap();
-    assert!(d5_var.nags.contains(&Nag::INTERESTING_MOVE));
-    assert!(d5_var.comment.contains("Scandinavian"));
-
-    let g6_var = e4.children.iter().find(|n| n.san == "g6").unwrap();
-    assert!(g6_var.comment.contains("Modern"));
-
-    let nf6_var = e4.children.iter().find(|n| n.san == "Nf6").unwrap();
-    assert!(nf6_var.comment.contains("Alekhine"));
+    // Verify complete structure with all annotated variations
+    let expected = game_tree! {
+        e4 {
+            c5 { Nf3 { d6 } },
+            e5 (comment: "King's Pawn", nag: GOOD_MOVE),
+            e6 (comment: "French") {
+                d4 { d5 }
+            },
+            c6 (comment: "Caro-Kann") {
+                d4 {
+                    d5 (nag: GOOD_MOVE)
+                }
+            },
+            d5 (comment: "Scandinavian", nag: INTERESTING_MOVE) {
+                exd5 { Qxd5 }
+            },
+            g6 (comment: "Modern"),
+            Nf6 (comment: "Alekhine")
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 /// Test numeric NAGs (positional evaluations) combined with symbolic NAGs

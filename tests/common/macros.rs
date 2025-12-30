@@ -63,6 +63,35 @@ macro_rules! assert_nodes_match {
     }};
 }
 
+/// Assert that GameTree headers match expected values (subset matching)
+///
+/// Verifies that specific headers exist and have the expected values.
+/// Headers not specified in the assertion are not checked.
+///
+/// # Example
+/// ```ignore
+/// let tree = parse_pgn("[White \"Carlsen\"][Black \"Nepomniachtchi\"] 1. e4 *");
+/// assert_headers!(tree, {
+///     "White" => "Carlsen",
+///     "Black" => "Nepomniachtchi",
+/// });
+/// ```
+#[macro_export]
+macro_rules! assert_headers {
+    ($tree:expr, { $($key:literal => $value:literal),* $(,)? }) => {{
+        let tree = &$tree;
+        $(
+            let actual = tree.headers.get($key);
+            assert_eq!(
+                actual.map(|s| s.as_str()),
+                Some($value),
+                "Header '{}' mismatch: expected {:?}, got {:?}",
+                $key, $value, actual
+            );
+        )*
+    }};
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::parse_pgn;
@@ -79,5 +108,14 @@ mod tests {
         let tree1 = crate::game_tree! { e4 { e5 } };
         let tree2 = crate::game_tree! { e4 { e5 } };
         crate::assert_nodes_match!(tree1, tree2);
+    }
+
+    #[test]
+    fn test_assert_headers_macro() {
+        let tree = parse_pgn(r#"[White "Carlsen"][Black "Nepomniachtchi"] 1. e4 *"#);
+        crate::assert_headers!(tree, {
+            "White" => "Carlsen",
+            "Black" => "Nepomniachtchi",
+        });
     }
 }

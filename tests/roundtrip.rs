@@ -3,6 +3,7 @@
 //! These tests verify that parsing a PGN and serializing it back produces
 //! an equivalent game tree when parsed again.
 
+#[macro_use]
 mod common;
 
 use common::{main_line_moves, parse_pgn};
@@ -137,11 +138,10 @@ fn roundtrip_with_options(pgn: &str, options: &OutputOptions) -> (GameTree, Game
 // Simple Game Roundtrips
 // ============================================================================
 
-const MINIMAL_GAME: &str = "1. e4 e5 2. Nf3 Nc6 1-0";
-
 #[test]
 fn test_roundtrip_minimal_game() {
-    let (t1, t2) = roundtrip(MINIMAL_GAME);
+    let pgn = "1. e4 e5 2. Nf3 Nc6 1-0";
+    let (t1, t2) = roundtrip(pgn);
     assert!(trees_equal(&t1, &t2));
     assert_eq!(t1.result, t2.result);
 }
@@ -167,11 +167,10 @@ fn test_roundtrip_game_with_headers() {
     assert_eq!(t2.header("Black"), Some("Player 2"));
 }
 
-const HEADERLESS_GAME: &str = "1. d4 d5 2. c4 e6 3. Nc3 Nf6 *";
-
 #[test]
 fn test_roundtrip_headerless_game() {
-    let (t1, t2) = roundtrip(HEADERLESS_GAME);
+    let pgn = "1. d4 d5 2. c4 e6 3. Nc3 Nf6 *";
+    let (t1, t2) = roundtrip(pgn);
     assert!(trees_equal(&t1, &t2));
 }
 
@@ -237,27 +236,24 @@ fn test_roundtrip_special_chars_comment() {
 // NAG Roundtrip
 // ============================================================================
 
-const SYMBOLIC_NAGS: &str = "1. e4! e5? 2. Nf3!! Nc6?? 3. Bb5!? a6?! *";
-
 #[test]
 fn test_roundtrip_symbolic_nags() {
-    let (t1, t2) = roundtrip(SYMBOLIC_NAGS);
+    let pgn = "1. e4! e5? 2. Nf3!! Nc6?? 3. Bb5!? a6?! *";
+    let (t1, t2) = roundtrip(pgn);
     assert!(trees_equal_with_nags(&t1, &t2));
 }
-
-const NUMERIC_NAGS: &str = "1. e4 $1 e5 $2 2. Nf3 $3 Nc6 $4 3. Bb5 $5 a6 $6 *";
 
 #[test]
 fn test_roundtrip_numeric_nags() {
-    let (t1, t2) = roundtrip(NUMERIC_NAGS);
+    let pgn = "1. e4 $1 e5 $2 2. Nf3 $3 Nc6 $4 3. Bb5 $5 a6 $6 *";
+    let (t1, t2) = roundtrip(pgn);
     assert!(trees_equal_with_nags(&t1, &t2));
 }
 
-const MULTIPLE_NAGS: &str = "1. e4! $14 e5 $2 $17 2. Nf3 *";
-
 #[test]
 fn test_roundtrip_multiple_nags() {
-    let (t1, t2) = roundtrip(MULTIPLE_NAGS);
+    let pgn = "1. e4! $14 e5 $2 $17 2. Nf3 *";
+    let (t1, t2) = roundtrip(pgn);
     assert!(trees_equal_with_nags(&t1, &t2));
 }
 
@@ -265,19 +261,17 @@ fn test_roundtrip_multiple_nags() {
 // Variation Roundtrip
 // ============================================================================
 
-const SINGLE_VARIATION: &str = "1. e4 e5 (1... c5 2. Nf3) 2. Nf3 Nc6 *";
-
 #[test]
 fn test_roundtrip_single_variation() {
-    let (t1, t2) = roundtrip(SINGLE_VARIATION);
+    let pgn = "1. e4 e5 (1... c5 2. Nf3) 2. Nf3 Nc6 *";
+    let (t1, t2) = roundtrip(pgn);
     assert!(trees_equal(&t1, &t2));
 }
 
-const SIBLING_VARIATIONS: &str = "1. e4 e5 (1... c5 2. Nf3) (1... e6 2. d4) (1... d5 2. exd5) 2. Nf3 *";
-
 #[test]
 fn test_roundtrip_sibling_variations() {
-    let (t1, t2) = roundtrip(SIBLING_VARIATIONS);
+    let pgn = "1. e4 e5 (1... c5 2. Nf3) (1... e6 2. d4) (1... d5 2. exd5) 2. Nf3 *";
+    let (t1, t2) = roundtrip(pgn);
     assert!(trees_equal(&t1, &t2));
 
     // Verify variation count
@@ -286,19 +280,17 @@ fn test_roundtrip_sibling_variations() {
     assert_eq!(e4_1.children.len(), e4_2.children.len());
 }
 
-const NESTED_VARIATIONS: &str = r#"1. e4 e5 (1... c5 2. Nf3 d6 (2... Nc6 3. d4 (3. Bb5 g6)) 3. d4) 2. Nf3 Nc6 *"#;
-
 #[test]
 fn test_roundtrip_nested_variations() {
-    let (t1, t2) = roundtrip(NESTED_VARIATIONS);
+    let pgn = r#"1. e4 e5 (1... c5 2. Nf3 d6 (2... Nc6 3. d4 (3. Bb5 g6)) 3. d4) 2. Nf3 Nc6 *"#;
+    let (t1, t2) = roundtrip(pgn);
     assert!(trees_equal(&t1, &t2));
 }
 
-const DEEPLY_NESTED: &str = r#"1. e4 e5 (1... c5 2. Nf3 d6 (2... Nc6 3. d4 cxd4 (3... e6 4. Nxc6 (4. d5 Ne5) bxc6 5. e5) 4. Nxd4) 3. d4 cxd4 4. Nxd4) 2. Nf3 Nc6 (2... Nf6 3. Nxe5 d6 (3... Nxe4 4. Qe2 Qe7) 4. Nf3) 3. Bb5 *"#;
-
 #[test]
 fn test_roundtrip_deeply_nested_variations() {
-    let (t1, t2) = roundtrip(DEEPLY_NESTED);
+    let pgn = r#"1. e4 e5 (1... c5 2. Nf3 d6 (2... Nc6 3. d4 cxd4 (3... e6 4. Nxc6 (4. d5 Ne5) bxc6 5. e5) 4. Nxd4) 3. d4 cxd4 4. Nxd4) 2. Nf3 Nc6 (2... Nf6 3. Nxe5 d6 (3... Nxe4 4. Qe2 Qe7) 4. Nf3) 3. Bb5 *"#;
+    let (t1, t2) = roundtrip(pgn);
     assert!(trees_equal(&t1, &t2));
     assert_eq!(t1.max_depth(), t2.max_depth());
 }
@@ -494,7 +486,8 @@ fn test_roundtrip_no_variations() {
         variations: false,
         ..Default::default()
     };
-    let (t1, t2, serialized) = roundtrip_with_options(NESTED_VARIATIONS, &options);
+    let nested_pgn = r#"1. e4 e5 (1... c5 2. Nf3 d6 (2... Nc6 3. d4 (3. Bb5 g6)) 3. d4) 2. Nf3 Nc6 *"#;
+    let (t1, t2, serialized) = roundtrip_with_options(nested_pgn, &options);
 
     // Variations should be absent
     assert!(!serialized.contains("("));
@@ -512,7 +505,8 @@ fn test_roundtrip_no_nags() {
         headers: false, // Disable headers to avoid "?" in site/date
         ..Default::default()
     };
-    let (t1, t2, serialized) = roundtrip_with_options(SYMBOLIC_NAGS, &options);
+    let nags_pgn = "1. e4! e5? 2. Nf3!! Nc6?? 3. Bb5!? a6?! *";
+    let (t1, t2, serialized) = roundtrip_with_options(nags_pgn, &options);
 
     // NAGs should be absent from movetext
     assert!(!serialized.contains("e4!"));
@@ -638,7 +632,8 @@ fn test_roundtrip_many_variations() {
 
 #[test]
 fn test_roundtrip_preserves_move_order() {
-    let (t1, t2) = roundtrip(MINIMAL_GAME);
+    let pgn = "1. e4 e5 2. Nf3 Nc6 1-0";
+    let (t1, t2) = roundtrip(pgn);
 
     let moves1 = main_line_moves(&t1);
     let moves2 = main_line_moves(&t2);
@@ -687,8 +682,9 @@ fn test_double_roundtrip_stable() {
 #[test]
 fn test_triple_roundtrip_stable() {
     let options = OutputOptions::default();
+    let nested_pgn = r#"1. e4 e5 (1... c5 2. Nf3 d6 (2... Nc6 3. d4 (3. Bb5 g6)) 3. d4) 2. Nf3 Nc6 *"#;
 
-    let tree1 = parse_pgn(NESTED_VARIATIONS);
+    let tree1 = parse_pgn(nested_pgn);
     let pgn2 = to_pgn(&tree1, &options);
     let tree2 = parse(&pgn2).unwrap();
     let pgn3 = to_pgn(&tree2, &options);
@@ -827,24 +823,21 @@ fn test_roundtrip_nags_on_multiple_moves() {
     let serialized = to_pgn(&tree1, &options);
     let tree2 = parse(&serialized).unwrap();
 
-    // Verify each move's NAGs
-    let e4_2 = tree2.root.find_child("e4").unwrap();
-    assert!(e4_2.nags.contains(&Nag::GOOD_MOVE), "e4 should have !");
-
-    let e5_2 = e4_2.find_child("e5").unwrap();
-    assert!(e5_2.nags.contains(&Nag::POOR_MOVE), "e5 should have ?");
-
-    let nf3_2 = e5_2.find_child("Nf3").unwrap();
-    assert!(nf3_2.nags.contains(&Nag::BRILLIANT_MOVE), "Nf3 should have !!");
-
-    let nc6_2 = nf3_2.find_child("Nc6").unwrap();
-    assert!(nc6_2.nags.contains(&Nag::BLUNDER), "Nc6 should have ??");
-
-    let bb5_2 = nc6_2.find_child("Bb5").unwrap();
-    assert!(bb5_2.nags.contains(&Nag::INTERESTING_MOVE), "Bb5 should have !?");
-
-    let a6_2 = bb5_2.find_child("a6").unwrap();
-    assert!(a6_2.nags.contains(&Nag::DUBIOUS_MOVE), "a6 should have ?!");
+    // Verify complete structure with all NAGs preserved
+    let expected = game_tree! {
+        e4 (nag: GOOD_MOVE) {
+            e5 (nag: POOR_MOVE) {
+                Nf3 (nag: BRILLIANT_MOVE) {
+                    Nc6 (nag: BLUNDER) {
+                        Bb5 (nag: INTERESTING_MOVE) {
+                            a6 (nag: DUBIOUS_MOVE)
+                        }
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree2, expected);
 }
 
 /// Test NAGs inside variations roundtrip correctly

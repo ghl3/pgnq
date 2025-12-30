@@ -88,6 +88,13 @@ let tree = game_tree! {
     }
 };
 
+// Multiple NAGs on one move
+let tree = game_tree! {
+    e4 (nags: [GOOD_MOVE, WHITE_SLIGHT_ADVANTAGE]) {
+        e5 (nags: [POOR_MOVE, BLACK_MODERATE_ADVANTAGE])
+    }
+};
+
 // With variations (siblings)
 let tree = game_tree! {
     e4 {
@@ -101,7 +108,7 @@ let tree = game_tree! {
 let tree = game_tree! { e4 { e5 { Nf3 { Nc6 { "O-O" } } } } };
 ```
 
-## Comparison Macros
+## Assertion Macros
 
 ```rust
 // Subset matching - actual may have extra properties
@@ -109,6 +116,12 @@ assert_contains_tree!(actual, expected);
 
 // Exact equality - all properties must match
 assert_nodes_match!(actual_node, expected_node);
+
+// Header verification - subset matching
+assert_headers!(tree, {
+    "White" => "Carlsen",
+    "Event" => "Championship",
+});
 ```
 
 ## Test Organization
@@ -120,7 +133,7 @@ tests/
 │   ├── mod.rs             # Test utilities: parse_pgn, count_nodes, etc.
 │   ├── tree_macro.rs      # game_tree! macro
 │   ├── comparison.rs      # node_contains, nodes_match
-│   ├── macros.rs          # assert_contains_tree!, assert_nodes_match!
+│   ├── macros.rs          # assert_contains_tree!, assert_nodes_match!, assert_headers!
 │   └── cli.rs             # CLI testing helpers
 ├── parser_edge_cases.rs   # Parser feature tests
 ├── roundtrip.rs           # Serialization tests

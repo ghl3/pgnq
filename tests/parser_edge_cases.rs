@@ -458,17 +458,27 @@ fn test_parse_sibling_variations() {
     assert_contains_tree!(tree, expected);
 }
 
-const NESTED_VARIATIONS: &str = r#"1. e4 e5 (1... c5 2. Nf3 d6 (2... Nc6 3. d4 (3. Bb5 g6)) 3. d4) 2. Nf3 Nc6 *"#;
-
 #[test]
 fn test_parse_nested_variations() {
-    let tree = parse_pgn(NESTED_VARIATIONS);
+    let pgn = r#"1. e4 e5 (1... c5 2. Nf3 d6 (2... Nc6 3. d4 (3. Bb5 g6)) 3. d4) 2. Nf3 Nc6 *"#;
+    let tree = parse_pgn(pgn);
 
-    // Verify nested structure exists
-    let e4 = tree.root.find_child("e4").expect("e4 should exist");
-    assert!(e4.children.len() > 1, "e4 should have variations");
-    assert!(e4.find_child("e5").is_some(), "e4 should have e5 child");
-    assert!(count_nodes(&tree) > 5);
+    // Full nested structure verification
+    let expected = game_tree! {
+        e4 {
+            e5 { Nf3 { Nc6 } },
+            c5 {
+                Nf3 {
+                    d6 { d4 },
+                    Nc6 {
+                        d4,
+                        Bb5 { g6 }
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 const VARIATION_WITH_ANNOTATIONS: &str = "1. e4 e5 (1... c5 {Sicilian Defense} 2. Nf3! d6) 2. Nf3 *";
@@ -491,38 +501,33 @@ fn test_parse_variation_with_annotations() {
     assert_contains_tree!(tree, expected);
 }
 
-const EARLY_VARIATION: &str = "1. e4 (1. d4 d5 2. c4) e5 2. Nf3 *";
-
 #[test]
 fn test_parse_early_variation() {
-    let tree = parse_pgn(EARLY_VARIATION);
+    let pgn = "1. e4 (1. d4 d5 2. c4) e5 2. Nf3 *";
+    let tree = parse_pgn(pgn);
 
-    // Root should have variation: e4 (main) and d4 (variation)
-    assert!(tree.root.find_child("e4").is_some(), "root should have e4");
-    assert!(tree.root.find_child("d4").is_some(), "root should have d4 variation");
+    // Main line
+    let expected_main = game_tree! { e4 { e5 { Nf3 } } };
+    assert_contains_tree!(tree, expected_main);
 
-    // Verify each main line continues
-    let expected_e4 = game_tree! { e4 { e5 { Nf3 } } };
-    assert_contains_tree!(tree, expected_e4);
+    // Root-level variation
+    let expected_var = game_tree! { d4 { d5 { c4 } } };
+    assert_contains_tree!(tree, expected_var);
 }
 
 #[test]
 fn test_parse_deeply_nested_variations() {
-    // These are all variations at move 1, so they're siblings
+    // These are all variations at move 1, so they're siblings at root level
     let pgn = r#"1. e4 (1. d4 (1. c4 (1. Nf3 d5) c5) d5) e5 *"#;
     let tree = parse_pgn(pgn);
 
     assert_eq!(tree.result, GameResult::Ongoing);
 
-    // All opening moves are siblings at root level
-    assert!(tree.root.find_child("e4").is_some(), "root should have e4");
-    assert!(tree.root.find_child("d4").is_some(), "root should have d4");
-    assert!(tree.root.find_child("c4").is_some(), "root should have c4");
-    assert!(tree.root.find_child("Nf3").is_some(), "root should have Nf3");
-
-    // Verify e4 has e5 as child
-    let expected_e4 = game_tree! { e4 { e5 } };
-    assert_contains_tree!(tree, expected_e4);
+    // All opening moves are siblings at root - verify each with continuations
+    assert_contains_tree!(tree, game_tree! { e4 { e5 } });
+    assert_contains_tree!(tree, game_tree! { d4 { d5 } });
+    assert_contains_tree!(tree, game_tree! { c4 { c5 } });
+    assert_contains_tree!(tree, game_tree! { Nf3 { d5 } });
 }
 
 #[test]
@@ -553,7 +558,9 @@ fn test_variation_after_every_move() {
 // CLOCK AND EVAL TESTS
 // ============================================================================
 
-const LICHESS_CLOCKS: &str = r#"[Event "Rated Blitz"]
+#[test]
+fn test_parse_lichess_clocks() {
+    let pgn = r#"[Event "Rated Blitz"]
 [Site "https://lichess.org"]
 [Date "2024.01.15"]
 [Round "?"]
@@ -564,12 +571,25 @@ const LICHESS_CLOCKS: &str = r#"[Event "Rated Blitz"]
 
 1. e4 {[%clk 0:03:00]} e5 {[%clk 0:03:00]} 2. Nf3 {[%clk 0:02:58]} Nc6 {[%clk 0:02:59]} 1-0"#;
 
-#[test]
-fn test_parse_lichess_clocks() {
-    let tree = parse_pgn(LICHESS_CLOCKS);
-    let e4 = tree.root.find_child("e4").unwrap();
-    // Comment should contain clock info
-    assert!(e4.comment.contains("%clk") || e4.comment.contains("clk") || e4.comment.is_empty() || !e4.comment.is_empty());
+    let tree = parse_pgn(pgn);
+
+    assert_headers!(tree, {
+        "Event" => "Rated Blitz",
+        "TimeControl" => "180+0",
+    });
+    assert_eq!(tree.result, GameResult::WhiteWins);
+
+    // Verify tree structure with clock comments
+    let expected = game_tree! {
+        e4 (comment: "%clk") {
+            e5 (comment: "%clk") {
+                Nf3 (comment: "%clk") {
+                    Nc6 (comment: "%clk")
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 const EVAL_ANNOTATIONS: &str = r#"1. e4 {[%eval 0.25]} e5 {[%eval 0.20]} 2. Nf3 {[%eval 0.35]} Nc6 {[%eval 0.30]} *"#;
@@ -1312,15 +1332,17 @@ fn test_parse_multiple_variations_same_point() {
     let pgn = "1. e4 (1. d4) (1. c4) (1. Nf3) (1. g3) e5 *";
     let tree = parse_pgn(pgn);
 
-    // Root should have 5 children: e4 + 4 variations
     assert_eq!(tree.result, GameResult::Ongoing);
     assert_eq!(tree.root.children.len(), 5);
-    let e4 = tree.root.find_child("e4").expect("should have e4");
-    assert!(e4.find_child("e5").is_some(), "e4 should have e5");
-    assert!(tree.root.find_child("d4").is_some(), "should have d4");
-    assert!(tree.root.find_child("c4").is_some(), "should have c4");
-    assert!(tree.root.find_child("Nf3").is_some(), "should have Nf3");
-    assert!(tree.root.find_child("g3").is_some(), "should have g3");
+
+    // Main line with continuation
+    assert_contains_tree!(tree, game_tree! { e4 { e5 } });
+
+    // All variations at root
+    assert_contains_tree!(tree, game_tree! { d4 });
+    assert_contains_tree!(tree, game_tree! { c4 });
+    assert_contains_tree!(tree, game_tree! { Nf3 });
+    assert_contains_tree!(tree, game_tree! { g3 });
 }
 
 #[test]
@@ -1328,16 +1350,19 @@ fn test_parse_variation_with_sub_variations() {
     let pgn = "1. e4 e5 (1... c5 2. Nf3 (2. Nc3 Nc6) d6) 2. Nf3 *";
     let tree = parse_pgn(pgn);
 
-    // Main line and Sicilian variation with sub-variations
     assert_eq!(tree.result, GameResult::Ongoing);
-    let e4 = tree.root.find_child("e4").expect("should have e4");
-    assert!(e4.children.len() > 1, "e4 should have variations");
-    let e5 = e4.find_child("e5").expect("e4 should have e5");
-    assert!(e5.find_child("Nf3").is_some(), "e5 should have Nf3");
-    let c5 = e4.find_child("c5").expect("e4 should have c5");
-    assert!(c5.children.len() > 1, "c5 should have variations");
-    assert!(c5.find_child("Nf3").is_some(), "c5 should have Nf3");
-    assert!(c5.find_child("Nc3").is_some(), "c5 should have Nc3");
+
+    // Main line and Sicilian variation with sub-variations
+    let expected = game_tree! {
+        e4 {
+            e5 { Nf3 },
+            c5 {
+                Nf3 { d6 },
+                Nc3 { Nc6 }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 #[test]
@@ -1345,15 +1370,23 @@ fn test_parse_variation_at_every_move_comprehensive() {
     let pgn = "1. e4 (1. d4) e5 (1... c5) 2. Nf3 (2. Bc4) Nc6 (2... Nf6) *";
     let tree = parse_pgn(pgn);
 
-    // Multiple variations throughout the game
     assert_eq!(tree.result, GameResult::Ongoing);
-    let e4 = tree.root.find_child("e4").expect("should have e4");
-    assert!(e4.children.len() > 1, "e4 should have variations (e5 and c5)");
-    let e5 = e4.find_child("e5").expect("e4 should have e5");
-    assert!(e5.children.len() > 1, "e5 should have variations (Nf3 and Bc4)");
-    let nf3 = e5.find_child("Nf3").expect("e5 should have Nf3");
-    assert!(nf3.children.len() > 1, "Nf3 should have variations (Nc6 and Nf6)");
-    assert!(tree.root.find_child("d4").is_some(), "should have d4 variation");
+
+    // Main tree with variations at every level
+    let expected = game_tree! {
+        e4 {
+            e5 {
+                Nf3 { Nc6, Nf6 },
+                Bc4
+            },
+            c5
+        }
+    };
+    assert_contains_tree!(tree, expected);
+
+    // Verify root-level variation (d4)
+    let d4_expected = game_tree! { d4 };
+    assert_contains_tree!(tree, d4_expected);
 }
 
 #[test]
@@ -1362,16 +1395,43 @@ fn test_parse_long_variation() {
     let pgn = "1. e4 e5 (1... c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6 6. Be2 e5 7. Nb3 Be7 8. O-O O-O 9. Be3 Be6) 2. Nf3 *";
     let tree = parse_pgn(pgn);
 
-    // Verify the Sicilian variation is present with deep continuation
     assert_eq!(tree.result, GameResult::Ongoing);
-    let e4 = tree.root.find_child("e4").expect("should have e4");
-    assert!(e4.children.len() > 1, "e4 should have variations");
-    let e5 = e4.find_child("e5").expect("e4 should have e5");
-    assert!(e5.find_child("Nf3").is_some(), "e5 should have Nf3");
-    let c5 = e4.find_child("c5").expect("e4 should have c5 variation");
-    // Verify deep path in Sicilian variation
-    assert!(tree.find_path(&["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3"]).is_some(),
-        "Should have deep Sicilian variation path");
+
+    // Main line and deep Sicilian variation
+    let expected = game_tree! {
+        e4 {
+            e5 { Nf3 },
+            c5 {
+                Nf3 {
+                    d6 {
+                        d4 {
+                            cxd4 {
+                                Nxd4 {
+                                    Nf6 {
+                                        Nc3 {
+                                            a6 {
+                                                Be2 {
+                                                    e5 {
+                                                        Nb3 {
+                                                            Be7
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
+
+    // Verify castling is also in the variation (O-O has hyphen, use find_path)
+    assert!(tree.find_path(&["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "a6", "Be2", "e5", "Nb3", "Be7", "O-O"]).is_some());
 }
 
 // ============================================================================
