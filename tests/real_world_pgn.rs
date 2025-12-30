@@ -59,16 +59,16 @@ fn test_lichess_game_complete() {
 
     // Verify complete tree structure with clock annotations
     let expected = game_tree! {
-        e4 (comment: "%clk") {
-            c5 (comment: "%clk") {
-                Nf3 (comment: "%clk") {
-                    d6 (comment: "%clk") {
-                        d4 (comment: "%clk") {
-                            cxd4 (comment: "%clk") {
-                                Nxd4 (comment: "%clk") {
-                                    Nf6 (comment: "%clk") {
-                                        Nc3 (comment: "%clk") {
-                                            a6 (comment: "%clk")
+        e4 (comment: "[%clk 0:03:00]") {
+            c5 (comment: "[%clk 0:03:00]") {
+                Nf3 (comment: "[%clk 0:02:58]") {
+                    d6 (comment: "[%clk 0:02:58]") {
+                        d4 (comment: "[%clk 0:02:55]") {
+                            cxd4 (comment: "[%clk 0:02:55]") {
+                                Nxd4 (comment: "[%clk 0:02:53]") {
+                                    Nf6 (comment: "[%clk 0:02:52]") {
+                                        Nc3 (comment: "[%clk 0:02:50]") {
+                                            a6 (comment: "[%clk 0:02:48]")
                                         }
                                     }
                                 }
@@ -130,14 +130,14 @@ fn test_chesscom_game_complete() {
 
     // Verify complete Ruy Lopez structure with fractional clock annotations
     let expected = game_tree! {
-        e4 (comment: "%clk") {
-            e5 (comment: "9:55.2") {
-                Nf3 (comment: "%clk") {
-                    Nc6 (comment: "%clk") {
-                        Bb5 (comment: "%clk") {
-                            a6 (comment: "%clk") {
-                                Ba4 (comment: "%clk") {
-                                    Nf6 (comment: "%clk")
+        e4 (comment: "[%clk 0:09:58.3]") {
+            e5 (comment: "[%clk 0:09:55.2]") {
+                Nf3 (comment: "[%clk 0:09:50.1]") {
+                    Nc6 (comment: "[%clk 0:09:48.7]") {
+                        Bb5 (comment: "[%clk 0:09:45.5]") {
+                            a6 (comment: "[%clk 0:09:40.2]") {
+                                Ba4 (comment: "[%clk 0:09:38.1]") {
+                                    Nf6 (comment: "[%clk 0:09:35.8]")
                                 }
                             }
                         }
@@ -203,24 +203,24 @@ fn test_annotated_game_complete() {
 
     // Verify complete tree structure with annotations
     let expected = game_tree! {
-        e4 (comment: "king's pawn", nag: GOOD_MOVE) {
-            c5 (comment: "Sicilian") {
-                Nf3 (nag: GOOD_MOVE) {
-                    Nc6 (comment: "develops") {
-                        d4 (comment: "center") {
+        e4 (comment: "The king's pawn opening. White stakes a claim in the center.", nag: GOOD_MOVE) {
+            c5 (comment: "The Sicilian Defense - the most popular response to 1.e4 at the top level.") {
+                Nf3 (comment: "Developing with tempo.", nag: GOOD_MOVE) {
+                    Nc6 (comment: "Black develops naturally.") {
+                        d4 (comment: "Opening the center.") {
                             cxd4 {
                                 Nxd4 {
                                     Nf6 {
                                         Nc3 {
-                                            e5 (comment: "Sveshnikov", nag: DUBIOUS_MOVE) {
+                                            e5 (comment: "The Sveshnikov! A double-edged choice.", nag: DUBIOUS_MOVE) {
                                                 Ndb5 {
                                                     d6 {
                                                         Bg5 {
                                                             a6 {
                                                                 Na3 {
-                                                                    b5 (nag: INTERESTING_MOVE) {
+                                                                    b5 (comment: "An interesting pawn sacrifice.", nag: INTERESTING_MOVE) {
                                                                         Bxf6 {
-                                                                            gxf6
+                                                                            gxf6 (comment: "Black's structure is damaged but compensation exists.", nag: BLACK_SLIGHT_ADVANTAGE)
                                                                         }
                                                                     }
                                                                 }
@@ -229,7 +229,7 @@ fn test_annotated_game_complete() {
                                                     }
                                                 }
                                             },
-                                            d6 (comment: "Najdorf") {
+                                            d6 (comment: "The Najdorf would be a safer choice.") {
                                                 Be2 {
                                                     e6
                                                 }
@@ -282,7 +282,7 @@ fn test_lichess_study_complete() {
     // Verify complete study structure with main line and all variations
     let expected = game_tree! {
         e4 {
-            c5 (comment: "Sicilian Defense") {
+            c5 (comment: "The Sicilian Defense is Black's most popular and successful response to 1.e4. It leads to asymmetrical positions with chances for both sides.") {
                 Nf3 {
                     d6 {
                         d4 {
@@ -290,10 +290,10 @@ fn test_lichess_study_complete() {
                                 Nxd4 {
                                     Nf6 {
                                         Nc3 {
-                                            a6 (comment: "Najdorf"),
-                                            e6 (comment: "Scheveningen"),
-                                            g6 (comment: "Dragon"),
-                                            Nc6 (comment: "Classical")
+                                            a6 (comment: "The Najdorf Variation - the most complex and popular."),
+                                            e6 (comment: "The Scheveningen - solid and flexible."),
+                                            g6 (comment: "The Dragon - sharp and tactical."),
+                                            Nc6 (comment: "The Classical - developing naturally.")
                                         }
                                     }
                                 }
@@ -301,7 +301,7 @@ fn test_lichess_study_complete() {
                         }
                     }
                 },
-                Nc3 (comment: "Closed") {
+                Nc3 (comment: "The Closed Sicilian - a solid alternative.") {
                     Nc6 {
                         g3 {
                             g6 {
@@ -316,7 +316,7 @@ fn test_lichess_study_complete() {
                         }
                     }
                 },
-                c3 (comment: "Alapin") {
+                c3 (comment: "The Alapin Variation - trying to build a strong center.") {
                     Nf6 {
                         e5 {
                             Nd5 {
@@ -329,7 +329,7 @@ fn test_lichess_study_complete() {
                         }
                     }
                 },
-                f4 (comment: "Grand Prix") {
+                f4 (comment: "The Grand Prix Attack - aggressive but risky.") {
                     d5 {
                         exd5 {
                             Nf6
@@ -415,9 +415,9 @@ fn test_stockfish_analysis_complete() {
 
     // Check eval annotations using game_tree! macro
     let expected = game_tree! {
-        e4 (comment: "%eval") {
-            e5 (comment: "%eval") {
-                Nf3 (comment: "%eval")
+        e4 (comment: "[%eval +0.25]") {
+            e5 (comment: "[%eval +0.30]") {
+                Nf3 (comment: "[%eval +0.28]")
             }
         }
     };
@@ -897,10 +897,10 @@ fn test_combined_features_same_move() {
 
     // Verify structure with NAGs, comments, and variations
     let expected = game_tree! {
-        e4 (comment: "great opening", nag: GOOD_MOVE) {
+        e4 (comment: "A great opening move", nag: GOOD_MOVE) {
             e5 { Nf3 },
-            c5 (comment: "Sicilian", nag: GOOD_MOVE),
-            e6 (comment: "French")
+            c5 (comment: "The Sicilian", nag: GOOD_MOVE),
+            e6 (comment: "The French")
         }
     };
     assert_contains_tree!(tree, expected);
@@ -924,7 +924,7 @@ fn test_deep_tree_with_annotations() {
                             a6 (nag: DUBIOUS_MOVE) {
                                 Ba4 {
                                     Nf6 {
-                                        "O-O" (comment: "Castle")
+                                        "O-O" (comment: "Castle early")
                                     }
                                 }
                             }
@@ -974,9 +974,9 @@ fn test_combined_eval_and_clock() {
 
     // Verify all moves have both eval and clock annotations
     let expected = game_tree! {
-        e4 (comment: "%eval") {
-            e5 (comment: "%eval") {
-                Nf3 (comment: "%eval")
+        e4 (comment: "[%eval 0.25] [%clk 0:03:00]") {
+            e5 (comment: "[%eval 0.30] [%clk 0:02:58]") {
+                Nf3 (comment: "[%eval 0.28] [%clk 0:02:55]")
             }
         }
     };
@@ -1012,16 +1012,16 @@ Nc6 3. Bc4 {Italian Game} Bc5 4. c3 Nf6 5. d4! exd4 $14 6. cxd4 Bb4+?! 1-0"#;
 
     // Verify complete structure with all annotation types
     let expected = game_tree! {
-        e4 (comment: "%eval", nag: GOOD_MOVE) {
+        e4 (comment: "Best move [%eval +0.35] [%clk 0:05:00]", nag: GOOD_MOVE) {
             e5 (nags: [POOR_MOVE, BLACK_MODERATE_ADVANTAGE]) {
-                Nf3 (comment: "Developing", nag: BRILLIANT_MOVE) {
+                Nf3 (comment: "Developing [%clk 0:04:58]", nag: BRILLIANT_MOVE) {
                     Nc6 {
                         Bc4 (comment: "Italian Game") {
                             Bc5 {
                                 c3 {
                                     Nf6 {
                                         d4 (nag: GOOD_MOVE) {
-                                            exd4 {
+                                            exd4 (nag: WHITE_SLIGHT_ADVANTAGE) {
                                                 cxd4
                                             }
                                         }
@@ -1087,8 +1087,8 @@ fn test_many_annotated_variations() {
     let expected = game_tree! {
         e4 {
             c5 { Nf3 { d6 } },
-            e5 (comment: "King's Pawn", nag: GOOD_MOVE),
-            e6 (comment: "French") {
+            e5 (comment: "King's Pawn Game", nag: GOOD_MOVE),
+            e6 (comment: "French Defense") {
                 d4 { d5 }
             },
             c6 (comment: "Caro-Kann") {
@@ -1099,8 +1099,8 @@ fn test_many_annotated_variations() {
             d5 (comment: "Scandinavian", nag: INTERESTING_MOVE) {
                 exd5 { Qxd5 }
             },
-            g6 (comment: "Modern"),
-            Nf6 (comment: "Alekhine")
+            g6 (comment: "Modern Defense"),
+            Nf6 (comment: "Alekhine's Defense")
         }
     };
     assert_contains_tree!(tree, expected);

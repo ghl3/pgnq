@@ -245,9 +245,9 @@ fn test_parse_brace_comments() {
 
     // Verify structure with comments
     let expected = game_tree! {
-        e4 (comment: "King's Pawn") {
-            e5 (comment: "Symmetrical") {
-                Nf3 (comment: "Attacking") {
+        e4 (comment: "The King's Pawn opening") {
+            e5 (comment: "Symmetrical response") {
+                Nf3 (comment: "Attacking the e5 pawn") {
                     Nc6 (comment: "Defending")
                 }
             }
@@ -491,7 +491,7 @@ fn test_parse_variation_with_annotations() {
     let expected = game_tree! {
         e4 {
             e5 { Nf3 },
-            c5 (comment: "Sicilian") {
+            c5 (comment: "Sicilian Defense") {
                 Nf3 (nag: GOOD_MOVE) {
                     d6
                 }
@@ -581,10 +581,10 @@ fn test_parse_lichess_clocks() {
 
     // Verify tree structure with clock comments
     let expected = game_tree! {
-        e4 (comment: "%clk") {
-            e5 (comment: "%clk") {
-                Nf3 (comment: "%clk") {
-                    Nc6 (comment: "%clk")
+        e4 (comment: "[%clk 0:03:00]") {
+            e5 (comment: "[%clk 0:03:00]") {
+                Nf3 (comment: "[%clk 0:02:58]") {
+                    Nc6 (comment: "[%clk 0:02:59]")
                 }
             }
         }
@@ -601,10 +601,10 @@ fn test_parse_eval_annotations() {
 
     // Verify structure has comments with eval
     let expected = game_tree! {
-        e4 (comment: "%eval") {
-            e5 (comment: "%eval") {
-                Nf3 (comment: "%eval") {
-                    Nc6 (comment: "%eval")
+        e4 (comment: "[%eval 0.25]") {
+            e5 (comment: "[%eval 0.20]") {
+                Nf3 (comment: "[%eval 0.35]") {
+                    Nc6 (comment: "[%eval 0.30]")
                 }
             }
         }

@@ -111,17 +111,35 @@ let tree = game_tree! { e4 { e5 { Nf3 { Nc6 { "O-O" } } } } };
 ## Assertion Macros
 
 ```rust
-// Subset matching - actual may have extra properties
+// Subset matching - actual may have extra children/NAGs not in expected
+// Comments and NAGs in expected must match exactly when specified
 assert_contains_tree!(actual, expected);
 
-// Exact equality - all properties must match
+// Exact equality - all properties must match exactly
 assert_nodes_match!(actual_node, expected_node);
 
-// Header verification - subset matching
+// Header verification - only checks specified headers
 assert_headers!(tree, {
     "White" => "Carlsen",
     "Event" => "Championship",
 });
+```
+
+### Matching Behavior
+
+`assert_contains_tree!` uses **subset matching**:
+- All nodes in `expected` must exist in `actual` at the same positions
+- `actual` may have additional children not in `expected`
+- Empty properties in `expected` are not checked
+- **Non-empty properties must match exactly** (comments, NAGs)
+
+This means you must use the full comment text:
+```rust
+// CORRECT - full comment text
+e4 (comment: "The King's Pawn opening")
+
+// WRONG - partial comment won't match
+e4 (comment: "King's Pawn")
 ```
 
 ## Test Organization

@@ -129,8 +129,8 @@ fn check_node_contains_recursive(
     }
 
     // Check comment (only if expected has a non-empty comment)
-    // Uses substring matching - actual comment must contain expected text
-    if !expected.comment.is_empty() && !actual.comment.contains(&expected.comment) {
+    // Uses exact matching - actual comment must equal expected text
+    if !expected.comment.is_empty() && actual.comment != expected.comment {
         diffs.push(Difference::new(
             format!("{} -> comment", path),
             format!("{:?}", expected.comment),
