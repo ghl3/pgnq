@@ -72,7 +72,7 @@ macro_rules! game_tree {
     ($name:ident ( $($key:ident : $val:tt),* $(,)? )) => {{
         let mut root = pgnq::tree::GameNode::root();
         let child = root.add_child(pgnq::tree::GameNode::new(stringify!($name)));
-        $(game_tree!(@prop child, $key, $val);)*
+        $($crate::game_tree!(@prop child, $key, $val);)*
         root
     }};
 
@@ -80,7 +80,7 @@ macro_rules! game_tree {
     ($name:literal ( $($key:ident : $val:tt),* $(,)? )) => {{
         let mut root = pgnq::tree::GameNode::root();
         let child = root.add_child(pgnq::tree::GameNode::new($name));
-        $(game_tree!(@prop child, $key, $val);)*
+        $($crate::game_tree!(@prop child, $key, $val);)*
         root
     }};
 
@@ -88,7 +88,7 @@ macro_rules! game_tree {
     ($name:ident { $($inner:tt)* }) => {{
         let mut root = pgnq::tree::GameNode::root();
         let child = root.add_child(pgnq::tree::GameNode::new(stringify!($name)));
-        game_tree!(@children child; $($inner)*);
+        $crate::game_tree!(@children child; $($inner)*);
         root
     }};
 
@@ -96,7 +96,7 @@ macro_rules! game_tree {
     ($name:literal { $($inner:tt)* }) => {{
         let mut root = pgnq::tree::GameNode::root();
         let child = root.add_child(pgnq::tree::GameNode::new($name));
-        game_tree!(@children child; $($inner)*);
+        $crate::game_tree!(@children child; $($inner)*);
         root
     }};
 
@@ -104,8 +104,8 @@ macro_rules! game_tree {
     ($name:ident ( $($key:ident : $val:tt),* $(,)? ) { $($inner:tt)* }) => {{
         let mut root = pgnq::tree::GameNode::root();
         let child = root.add_child(pgnq::tree::GameNode::new(stringify!($name)));
-        $(game_tree!(@prop child, $key, $val);)*
-        game_tree!(@children child; $($inner)*);
+        $($crate::game_tree!(@prop child, $key, $val);)*
+        $crate::game_tree!(@children child; $($inner)*);
         root
     }};
 
@@ -113,8 +113,8 @@ macro_rules! game_tree {
     ($name:literal ( $($key:ident : $val:tt),* $(,)? ) { $($inner:tt)* }) => {{
         let mut root = pgnq::tree::GameNode::root();
         let child = root.add_child(pgnq::tree::GameNode::new($name));
-        $(game_tree!(@prop child, $key, $val);)*
-        game_tree!(@children child; $($inner)*);
+        $($crate::game_tree!(@prop child, $key, $val);)*
+        $crate::game_tree!(@children child; $($inner)*);
         root
     }};
 
@@ -126,67 +126,67 @@ macro_rules! game_tree {
     // Identifier with props and children, followed by comma and more
     (@children $parent:ident; $name:ident ( $($key:ident : $val:tt),* $(,)? ) { $($inner:tt)* } , $($rest:tt)+) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new(stringify!($name)));
-        $(game_tree!(@prop child, $key, $val);)*
-        game_tree!(@children child; $($inner)*);
-        game_tree!(@children $parent; $($rest)+);
+        $($crate::game_tree!(@prop child, $key, $val);)*
+        $crate::game_tree!(@children child; $($inner)*);
+        $crate::game_tree!(@children $parent; $($rest)+);
     }};
 
     // Identifier with props and children, trailing comma
     (@children $parent:ident; $name:ident ( $($key:ident : $val:tt),* $(,)? ) { $($inner:tt)* } ,) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new(stringify!($name)));
-        $(game_tree!(@prop child, $key, $val);)*
-        game_tree!(@children child; $($inner)*);
+        $($crate::game_tree!(@prop child, $key, $val);)*
+        $crate::game_tree!(@children child; $($inner)*);
     }};
 
     // Identifier with props and children (last item)
     (@children $parent:ident; $name:ident ( $($key:ident : $val:tt),* $(,)? ) { $($inner:tt)* }) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new(stringify!($name)));
-        $(game_tree!(@prop child, $key, $val);)*
-        game_tree!(@children child; $($inner)*);
+        $($crate::game_tree!(@prop child, $key, $val);)*
+        $crate::game_tree!(@children child; $($inner)*);
     }};
 
     // Identifier with props only, followed by comma and more
     (@children $parent:ident; $name:ident ( $($key:ident : $val:tt),* $(,)? ) , $($rest:tt)+) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new(stringify!($name)));
-        $(game_tree!(@prop child, $key, $val);)*
-        game_tree!(@children $parent; $($rest)+);
+        $($crate::game_tree!(@prop child, $key, $val);)*
+        $crate::game_tree!(@children $parent; $($rest)+);
     }};
 
     // Identifier with props only, trailing comma
     (@children $parent:ident; $name:ident ( $($key:ident : $val:tt),* $(,)? ) ,) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new(stringify!($name)));
-        $(game_tree!(@prop child, $key, $val);)*
+        $($crate::game_tree!(@prop child, $key, $val);)*
     }};
 
     // Identifier with props only (last item)
     (@children $parent:ident; $name:ident ( $($key:ident : $val:tt),* $(,)? )) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new(stringify!($name)));
-        $(game_tree!(@prop child, $key, $val);)*
+        $($crate::game_tree!(@prop child, $key, $val);)*
     }};
 
     // Identifier with children only, followed by comma and more
     (@children $parent:ident; $name:ident { $($inner:tt)* } , $($rest:tt)+) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new(stringify!($name)));
-        game_tree!(@children child; $($inner)*);
-        game_tree!(@children $parent; $($rest)+);
+        $crate::game_tree!(@children child; $($inner)*);
+        $crate::game_tree!(@children $parent; $($rest)+);
     }};
 
     // Identifier with children only, trailing comma
     (@children $parent:ident; $name:ident { $($inner:tt)* } ,) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new(stringify!($name)));
-        game_tree!(@children child; $($inner)*);
+        $crate::game_tree!(@children child; $($inner)*);
     }};
 
     // Identifier with children only (last item)
     (@children $parent:ident; $name:ident { $($inner:tt)* }) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new(stringify!($name)));
-        game_tree!(@children child; $($inner)*);
+        $crate::game_tree!(@children child; $($inner)*);
     }};
 
     // Identifier leaf, followed by comma and more
     (@children $parent:ident; $name:ident , $($rest:tt)+) => {{
         $parent.add_child(pgnq::tree::GameNode::new(stringify!($name)));
-        game_tree!(@children $parent; $($rest)+);
+        $crate::game_tree!(@children $parent; $($rest)+);
     }};
 
     // Identifier leaf with trailing comma
@@ -204,67 +204,67 @@ macro_rules! game_tree {
     // String with props and children, followed by comma and more
     (@children $parent:ident; $name:literal ( $($key:ident : $val:tt),* $(,)? ) { $($inner:tt)* } , $($rest:tt)+) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new($name));
-        $(game_tree!(@prop child, $key, $val);)*
-        game_tree!(@children child; $($inner)*);
-        game_tree!(@children $parent; $($rest)+);
+        $($crate::game_tree!(@prop child, $key, $val);)*
+        $crate::game_tree!(@children child; $($inner)*);
+        $crate::game_tree!(@children $parent; $($rest)+);
     }};
 
     // String with props and children, trailing comma
     (@children $parent:ident; $name:literal ( $($key:ident : $val:tt),* $(,)? ) { $($inner:tt)* } ,) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new($name));
-        $(game_tree!(@prop child, $key, $val);)*
-        game_tree!(@children child; $($inner)*);
+        $($crate::game_tree!(@prop child, $key, $val);)*
+        $crate::game_tree!(@children child; $($inner)*);
     }};
 
     // String with props and children (last item)
     (@children $parent:ident; $name:literal ( $($key:ident : $val:tt),* $(,)? ) { $($inner:tt)* }) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new($name));
-        $(game_tree!(@prop child, $key, $val);)*
-        game_tree!(@children child; $($inner)*);
+        $($crate::game_tree!(@prop child, $key, $val);)*
+        $crate::game_tree!(@children child; $($inner)*);
     }};
 
     // String with props only, followed by comma and more
     (@children $parent:ident; $name:literal ( $($key:ident : $val:tt),* $(,)? ) , $($rest:tt)+) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new($name));
-        $(game_tree!(@prop child, $key, $val);)*
-        game_tree!(@children $parent; $($rest)+);
+        $($crate::game_tree!(@prop child, $key, $val);)*
+        $crate::game_tree!(@children $parent; $($rest)+);
     }};
 
     // String with props only, trailing comma
     (@children $parent:ident; $name:literal ( $($key:ident : $val:tt),* $(,)? ) ,) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new($name));
-        $(game_tree!(@prop child, $key, $val);)*
+        $($crate::game_tree!(@prop child, $key, $val);)*
     }};
 
     // String with props only (last item)
     (@children $parent:ident; $name:literal ( $($key:ident : $val:tt),* $(,)? )) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new($name));
-        $(game_tree!(@prop child, $key, $val);)*
+        $($crate::game_tree!(@prop child, $key, $val);)*
     }};
 
     // String with children only, followed by comma and more
     (@children $parent:ident; $name:literal { $($inner:tt)* } , $($rest:tt)+) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new($name));
-        game_tree!(@children child; $($inner)*);
-        game_tree!(@children $parent; $($rest)+);
+        $crate::game_tree!(@children child; $($inner)*);
+        $crate::game_tree!(@children $parent; $($rest)+);
     }};
 
     // String with children only, trailing comma
     (@children $parent:ident; $name:literal { $($inner:tt)* } ,) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new($name));
-        game_tree!(@children child; $($inner)*);
+        $crate::game_tree!(@children child; $($inner)*);
     }};
 
     // String with children only (last item)
     (@children $parent:ident; $name:literal { $($inner:tt)* }) => {{
         let child = $parent.add_child(pgnq::tree::GameNode::new($name));
-        game_tree!(@children child; $($inner)*);
+        $crate::game_tree!(@children child; $($inner)*);
     }};
 
     // String leaf, followed by comma and more
     (@children $parent:ident; $name:literal , $($rest:tt)+) => {{
         $parent.add_child(pgnq::tree::GameNode::new($name));
-        game_tree!(@children $parent; $($rest)+);
+        $crate::game_tree!(@children $parent; $($rest)+);
     }};
 
     // String leaf with trailing comma

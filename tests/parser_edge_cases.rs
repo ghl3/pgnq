@@ -3,14 +3,13 @@
 //! Tests various PGN formats, move notations, comments, NAGs, variations,
 //! and other edge cases to ensure the parser is robust and accepting.
 
+#[macro_use]
 mod common;
-mod dsl;
 
-use common::*;
-use dsl::*;
 use pgnq::nag::Nag;
 use pgnq::parser::parse;
 use pgnq::tree::GameResult;
+use common::{count_nodes, main_line_moves, parse_pgn};
 use test_case::test_case;
 
 // Use pretty_assertions for better diffs, but only in non-test_case tests
@@ -22,12 +21,29 @@ use pretty_assertions::assert_eq as pretty_assert_eq;
 // BASIC PARSING TESTS
 // ============================================================================
 
+const MINIMAL_GAME: &str = "1. e4 e5 2. Nf3 Nc6 1-0";
+
 #[test]
 fn test_parse_minimal_game() {
     let tree = parse_pgn(MINIMAL_GAME);
-    assert_eq!(count_nodes(&tree), 4);
+
     assert_eq!(tree.result, GameResult::WhiteWins);
+
+    let expected = game_tree! {
+        e4 { e5 { Nf3 { Nc6 } } }
+    };
+    assert_contains_tree!(tree, expected);
 }
+
+const FULL_HEADERS_GAME: &str = r#"[Event "Test Tournament"]
+[Site "Test City"]
+[Date "2024.01.15"]
+[Round "1"]
+[White "Player, White"]
+[Black "Player, Black"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 1-0"#;
 
 #[test]
 fn test_parse_full_headers() {
@@ -39,7 +55,14 @@ fn test_parse_full_headers() {
     assert_eq!(tree.header("White"), Some("Player, White"));
     assert_eq!(tree.header("Black"), Some("Player, Black"));
     assert_eq!(tree.result, GameResult::WhiteWins);
+
+    let expected = game_tree! {
+        e4 { e5 { Nf3 { Nc6 { Bb5 } } } }
+    };
+    assert_contains_tree!(tree, expected);
 }
+
+const HEADERLESS_GAME: &str = "1. d4 d5 2. c4 e6 3. Nc3 Nf6 *";
 
 #[test]
 fn test_parse_headerless_game() {
@@ -47,18 +70,43 @@ fn test_parse_headerless_game() {
     assert!(tree.headers.is_empty() || tree.header("Event") == Some("?"));
     assert_eq!(count_nodes(&tree), 6);
     assert_eq!(tree.result, GameResult::Ongoing);
+
+    let expected = game_tree! {
+        d4 { d5 { c4 { e6 { Nc3 { Nf6 } } } } }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 // ============================================================================
 // MOVE NOTATION TESTS
 // ============================================================================
 
+const CASTLING_GAME: &str = r#"[Event "Castling Test"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. O-O Nf6 5. d3 O-O 6. c3 d6 *"#;
+
 #[test]
 fn test_parse_castling_kingside() {
     let tree = parse_pgn(CASTLING_GAME);
     let moves = main_line_moves(&tree);
     assert!(moves.contains(&"O-O".to_string()));
+
+    // Verify basic tree structure (castling move O-O has hyphen, verify via find_path)
+    let expected = game_tree! {
+        e4 { e5 { Nf3 { Nc6 { Bc4 { Bc5 } } } } }
+    };
+    assert_contains_tree!(tree, expected);
+    // Verify castling is in the tree
+    assert!(tree.find_path(&["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "O-O"]).is_some());
 }
+
+const QUEENSIDE_CASTLING: &str = "1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Bg5 Be7 5. e3 O-O 6. Nf3 Nbd7 7. Qc2 c6 8. O-O-O *";
 
 #[test]
 fn test_parse_castling_queenside() {
@@ -67,9 +115,10 @@ fn test_parse_castling_queenside() {
     assert!(moves.contains(&"O-O-O".to_string()));
 }
 
+const CASTLING_WITH_CHECK: &str = "1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6 4. O-O Nxe4 5. d4 Nd6 6. Bxc6 dxc6 7. dxe5 Nf5 8. Qxd8+ Kxd8 *";
+
 #[test]
 fn test_parse_castling_with_check() {
-    // Castling can sometimes give check (though rare)
     let tree = parse_pgn(CASTLING_WITH_CHECK);
     assert!(count_nodes(&tree) > 0);
 }
@@ -80,7 +129,6 @@ fn test_parse_castling_zero_notation() {
     let pgn = "1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. 0-0 Nf6 5. d3 0-0 *";
     let result = parse(pgn);
     // Our parser should either accept this or reject it gracefully
-    // For now, we expect it to work since we want to be accepting
     if let Ok(tree) = result {
         assert!(count_nodes(&tree) > 0);
     }
@@ -123,6 +171,8 @@ fn test_parse_check_notation() {
     assert!(moves.contains(&"Qxf7#".to_string()));
 }
 
+const DISAMBIGUATION_FILE: &str = "1. e4 e5 2. Nf3 Nc6 3. d4 exd4 4. Nxd4 Nf6 5. Nc3 Bb4 6. Nxc6 bxc6 7. Bd3 d5 8. exd5 cxd5 9. O-O O-O 10. Bg5 c6 11. Qf3 Be7 12. Rae1 *";
+
 #[test]
 fn test_parse_disambiguation_file() {
     let tree = parse_pgn(DISAMBIGUATION_FILE);
@@ -131,11 +181,15 @@ fn test_parse_disambiguation_file() {
     assert!(moves.iter().any(|m| m.starts_with("R") || m.starts_with("N")));
 }
 
+const DISAMBIGUATION_RANK: &str = "1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6 6. Be2 e5 7. Nb3 Be7 8. O-O O-O 9. Be3 Be6 10. Nd5 Nxd5 11. exd5 Bf5 12. c4 Nd7 13. Rc1 Rc8 14. Qd2 f6 15. Rfd1 Bg6 16. Na5 b5 17. Nc6 Qb6 18. Nxe7+ Kh8 19. Bf3 R8c7 20. Nc6 R7xc6 *";
+
 #[test]
 fn test_parse_disambiguation_rank() {
     let tree = parse_pgn(DISAMBIGUATION_RANK);
     assert!(count_nodes(&tree) > 10);
 }
+
+const PAWN_PROMOTION: &str = "1. e4 d5 2. exd5 Qxd5 3. Nc3 Qa5 4. d4 c6 5. Nf3 Nf6 6. Bc4 Bf5 7. Bd2 e6 8. Qe2 Bb4 9. O-O-O Nbd7 10. Rhe1 O-O 11. a3 Bxc3 12. Bxc3 Qc7 13. Kb1 b5 14. Bd3 Bxd3 15. Qxd3 a5 16. Ne5 Nxe5 17. Rxe5 Nd7 18. Re2 a4 19. Qe3 Qa5 20. d5 exd5 21. Rxd5 Qa6 22. Bd4 Qe6 23. Qg5 Qg6 24. Qxg6 hxg6 25. Rd6 Ne5 26. Bxe5 Rfe8 27. Bd4 Re4 28. Bc3 Rae8 29. Rxc6 Re1+ 30. Bxe1 Rxe1+ 31. Ka2 Re8 32. Rc7 Kf8 33. Ra7 Re4 34. h3 Rc4 35. Kb1 Rxc2 36. Ra8+ Ke7 37. Ra7+ Kf6 38. Rxc2 b4 39. axb4 a3 40. bxa3 Ke5 41. Rc5+ Kd4 42. a4 f5 43. a5 g5 44. a6 f4 45. a7 f3 46. a8=Q *";
 
 #[test]
 fn test_parse_pawn_promotion() {
@@ -144,6 +198,8 @@ fn test_parse_pawn_promotion() {
     // Should contain a promotion move
     assert!(moves.iter().any(|m| m.contains("=")));
 }
+
+const UNDERPROMOTION: &str = "1. e4 e5 2. f4 exf4 3. Nf3 g5 4. h4 g4 5. Ne5 Nf6 6. d4 d6 7. Nd3 Nxe4 8. Bxf4 Qe7 9. Be2 Nc6 10. c3 Bf5 11. Qc2 O-O-O 12. O-O Bxd3 13. Bxd3 Nf6 14. b4 h5 15. a4 Bg7 16. b5 Ne5 17. dxe5 dxe5 18. Be3 Nd5 19. Bd2 Qd6 20. Bf5+ Kb8 21. Be4 Nc7 22. Rf5 Rhf8 23. Rxf8 Rxf8 24. Bf3 Qg6 25. a5 Qb1+ 26. Qxb1 f6 27. Qb4 Kc8 28. Qc5 Bf8 29. Ra4 Bxc5+ 30. Bxc5 Rd8 31. Bxc7 Kxc7 32. Rxg4 Rd1+ 33. Kf2 Rd2+ 34. Kf1 Kb8 35. Bc6 Rxg2 36. b6 axb6 37. axb6 c5 38. Bb5 f5 39. Rg8+ Kc8 40. Ba6 bxa6 41. Rxc8+ Kxc8 42. b7+ Kxb7 *";
 
 #[test]
 fn test_parse_underpromotion() {
@@ -170,18 +226,47 @@ fn test_parse_promotion_variants() {
 // COMMENT TESTS
 // ============================================================================
 
+const BRACE_COMMENTS: &str = r#"[Event "Comment Test"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+
+1. e4 {The King's Pawn opening} e5 {Symmetrical response} 2. Nf3 {Attacking the e5 pawn} Nc6 {Defending} *"#;
+
 #[test]
 fn test_parse_brace_comments() {
     let tree = parse_pgn(BRACE_COMMENTS);
+    let e4 = tree.root.find_child("e4").expect("e4 should exist");
+    assert!(!e4.comment.is_empty(), "e4 should have a comment");
+    assert!(e4.comment.contains("King's Pawn"), "Comment should contain King's Pawn");
 
-    let expected = TreeExpectation::new()
-        .root("e4", |n| n
-            .has_comment()
-            .comment_contains("King's Pawn")
-        );
-
-    assert_tree_contains!(tree, expected);
+    // Verify structure with comments
+    let expected = game_tree! {
+        e4 (comment: "King's Pawn") {
+            e5 (comment: "Symmetrical") {
+                Nf3 (comment: "Attacking") {
+                    Nc6 (comment: "Defending")
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
+
+const SEMICOLON_COMMENTS: &str = r#"[Event "Semicolon Test"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+
+1. e4 e5 ; Open game
+2. Nf3 Nc6 ; Knight development
+3. Bb5 *"#;
 
 #[test]
 fn test_parse_semicolon_comments() {
@@ -190,38 +275,40 @@ fn test_parse_semicolon_comments() {
     assert!(count_nodes(&tree) > 0);
 }
 
+const MULTILINE_COMMENT: &str = r#"[Event "Multiline Test"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+
+1. e4 {This is a longer comment
+that spans multiple lines
+and contains various information} e5 *"#;
+
 #[test]
 fn test_parse_multiline_comment() {
     let tree = parse_pgn(MULTILINE_COMMENT);
-
-    let expected = TreeExpectation::new()
-        .root("e4", |n| n
-            .comment_contains("longer comment")
-        );
-
-    assert_tree_contains!(tree, expected);
+    let e4 = tree.root.find_child("e4").expect("e4 should exist");
+    assert!(e4.comment.contains("longer comment"), "Comment should contain 'longer comment'");
 }
+
+const EMPTY_COMMENT: &str = "1. e4 {} e5 *";
 
 #[test]
 fn test_parse_empty_comment() {
     let tree = parse_pgn(EMPTY_COMMENT);
-
-    let expected = TreeExpectation::new()
-        .node_count(2);
-
-    assert_tree_contains!(tree, expected);
+    assert_eq!(count_nodes(&tree), 2);
 }
+
+const SPECIAL_CHARS_COMMENT: &str = "1. e4 {Special chars: <>!@#$%^&*()_+-=[]|;':\",./<>?} e5 *";
 
 #[test]
 fn test_parse_special_chars_in_comment() {
     let tree = parse_pgn(SPECIAL_CHARS_COMMENT);
-
-    let expected = TreeExpectation::new()
-        .root("e4", |n| n
-            .comment_contains("Special chars")
-        );
-
-    assert_tree_contains!(tree, expected);
+    let e4 = tree.root.find_child("e4").expect("e4 should exist");
+    assert!(e4.comment.contains("Special chars"), "Comment should contain 'Special chars'");
 }
 
 #[test]
@@ -229,15 +316,11 @@ fn test_parse_comment_with_moves_mentioned() {
     let pgn = r#"1. e4 {After e4, Black can reply with e5, c5, or e6} e5 *"#;
     let tree = parse_pgn(pgn);
 
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .comment_contains("e4")
-            .comment_contains("Black can reply")
-            .leaf("e5")
-        );
-
-    assert_tree_contains!(tree, expected);
+    assert_eq!(tree.result, GameResult::Ongoing);
+    let e4 = tree.root.find_child("e4").expect("e4 should exist");
+    assert!(e4.comment.contains("e4"), "Comment should mention e4");
+    assert!(e4.comment.contains("Black can reply"), "Comment should mention Black can reply");
+    assert!(e4.find_child("e5").is_some(), "e5 should be a child of e4");
 }
 
 #[test]
@@ -245,16 +328,10 @@ fn test_parse_unicode_in_comment() {
     let pgn = "1. e4 {The king ♔ attacks} e5 *";
     let tree = parse_pgn(pgn);
 
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .has_comment()
-            .child("e5", |n| n)
-        );
-
-    assert_tree_contains!(tree, expected);
-    // Additional verification for unicode
-    let e4 = tree.root.find_child("e4").unwrap();
+    assert_eq!(tree.result, GameResult::Ongoing);
+    let e4 = tree.root.find_child("e4").expect("e4 should exist");
+    assert!(!e4.comment.is_empty(), "e4 should have a comment");
+    assert!(e4.find_child("e5").is_some(), "e5 should be a child of e4");
     assert!(e4.comment.contains("♔") || e4.comment.contains("king"));
 }
 
@@ -262,28 +339,41 @@ fn test_parse_unicode_in_comment() {
 // NAG TESTS
 // ============================================================================
 
+const SYMBOLIC_NAGS: &str = "1. e4! e5? 2. Nf3!! Nc6?? 3. Bb5!? a6?! *";
+
 #[test]
 fn test_parse_symbolic_nags() {
     let tree = parse_pgn(SYMBOLIC_NAGS);
+    let e4 = tree.root.find_child("e4").expect("e4 should exist");
+    assert!(e4.nags.contains(&Nag::GOOD_MOVE), "e4 should have GOOD_MOVE NAG");
 
-    // e4 has ! (good move, NAG 1)
-    let expected = TreeExpectation::new()
-        .root("e4", |n| n
-            .nag(Nag::GOOD_MOVE)
-        );
-
-    assert_tree_contains!(tree, expected);
+    // Verify NAGs throughout the tree
+    let expected = game_tree! {
+        e4 (nag: GOOD_MOVE) {
+            e5 (nag: POOR_MOVE) {
+                Nf3 (nag: BRILLIANT_MOVE) {
+                    Nc6 (nag: BLUNDER) {
+                        Bb5 (nag: INTERESTING_MOVE) {
+                            a6 (nag: DUBIOUS_MOVE)
+                        }
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
+
+const NUMERIC_NAGS: &str = "1. e4 $1 e5 $2 2. Nf3 $3 Nc6 $4 3. Bb5 $5 a6 $6 *";
 
 #[test]
 fn test_parse_numeric_nags() {
     let tree = parse_pgn(NUMERIC_NAGS);
-
-    let expected = TreeExpectation::new()
-        .root("e4", |n| n.has_nag());
-
-    assert_tree_contains!(tree, expected);
+    let e4 = tree.root.find_child("e4").expect("e4 should exist");
+    assert!(!e4.nags.is_empty(), "e4 should have at least one NAG");
 }
+
+const POSITIONAL_NAGS: &str = "1. e4 $14 e5 $15 2. Nf3 $16 Nc6 $17 3. Bb5 $18 a6 $19 *";
 
 #[test]
 fn test_parse_positional_nags() {
@@ -291,18 +381,13 @@ fn test_parse_positional_nags() {
     assert!(count_nodes(&tree) > 0);
 }
 
+const MULTIPLE_NAGS: &str = "1. e4! $14 e5 $2 $17 2. Nf3 *";
+
 #[test]
 fn test_parse_multiple_nags() {
     let tree = parse_pgn(MULTIPLE_NAGS);
-
-    // e4 has both ! and $14
-    let expected = TreeExpectation::new()
-        .root("e4", |n| n.has_nag());
-
-    assert_tree_contains!(tree, expected);
-    // Verify at least one NAG
-    let e4 = tree.root.find_child("e4").unwrap();
-    assert!(e4.nags.len() >= 1);
+    let e4 = tree.root.find_child("e4").expect("e4 should exist");
+    assert!(e4.nags.len() >= 1, "e4 should have at least one NAG");
 }
 
 #[test_case("1. e4! *" => 1; "good move")]
@@ -339,81 +424,86 @@ fn test_parse_numeric_nag_values(pgn: &str) -> usize {
 // VARIATION TESTS
 // ============================================================================
 
+const SINGLE_VARIATION: &str = "1. e4 e5 (1... c5 2. Nf3) 2. Nf3 Nc6 *";
+
 #[test]
 fn test_parse_single_variation() {
     let tree = parse_pgn(SINGLE_VARIATION);
 
     // e4 should have two children: e5 (main) and c5 (variation)
-    let expected = TreeExpectation::new()
-        .root("e4", |n| n
-            .children_count(2)
-            .has_variations()
-            .has_child("e5")
-            .has_child("c5")
-        );
-
-    assert_tree_contains!(tree, expected);
+    let expected = game_tree! {
+        e4 {
+            e5 { Nf3 { Nc6 } },
+            c5 { Nf3 }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
+
+const SIBLING_VARIATIONS: &str = "1. e4 e5 (1... c5 2. Nf3) (1... e6 2. d4) (1... d5 2. exd5) 2. Nf3 *";
 
 #[test]
 fn test_parse_sibling_variations() {
     let tree = parse_pgn(SIBLING_VARIATIONS);
 
     // e4 should have 4 children: e5, c5, e6, d5
-    let expected = TreeExpectation::new()
-        .root("e4", |n| n
-            .children_count(4)
-            .child("e5", |n| n)
-            .variation("c5", |n| n)
-            .variation("e6", |n| n)
-            .variation("d5", |n| n)
-        );
-
-    assert_tree_contains!(tree, expected);
+    let expected = game_tree! {
+        e4 {
+            e5 { Nf3 },
+            c5 { Nf3 },
+            e6 { d4 },
+            d5 { exd5 }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
+
+const NESTED_VARIATIONS: &str = r#"1. e4 e5 (1... c5 2. Nf3 d6 (2... Nc6 3. d4 (3. Bb5 g6)) 3. d4) 2. Nf3 Nc6 *"#;
 
 #[test]
 fn test_parse_nested_variations() {
     let tree = parse_pgn(NESTED_VARIATIONS);
 
     // Verify nested structure exists
-    let expected = TreeExpectation::new()
-        .root("e4", |n| n
-            .has_variations()
-            .has_child("e5")
-        );
-
-    assert_tree_contains!(tree, expected);
+    let e4 = tree.root.find_child("e4").expect("e4 should exist");
+    assert!(e4.children.len() > 1, "e4 should have variations");
+    assert!(e4.find_child("e5").is_some(), "e4 should have e5 child");
     assert!(count_nodes(&tree) > 5);
 }
+
+const VARIATION_WITH_ANNOTATIONS: &str = "1. e4 e5 (1... c5 {Sicilian Defense} 2. Nf3! d6) 2. Nf3 *";
 
 #[test]
 fn test_parse_variation_with_annotations() {
     let tree = parse_pgn(VARIATION_WITH_ANNOTATIONS);
 
-    // Verify c5 variation has Sicilian comment
-    let expected = TreeExpectation::new()
-        .root("e4", |n| n
-            .has_variations()
-            .child("e5", |n| n)
-            .variation("c5", |n| n
-                .comment_contains("Sicilian")
-            )
-        );
-
-    assert_tree_contains!(tree, expected);
+    // Verify c5 variation has Sicilian comment and Nf3 has !
+    let expected = game_tree! {
+        e4 {
+            e5 { Nf3 },
+            c5 (comment: "Sicilian") {
+                Nf3 (nag: GOOD_MOVE) {
+                    d6
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
+
+const EARLY_VARIATION: &str = "1. e4 (1. d4 d5 2. c4) e5 2. Nf3 *";
 
 #[test]
 fn test_parse_early_variation() {
     let tree = parse_pgn(EARLY_VARIATION);
 
     // Root should have variation: e4 (main) and d4 (variation)
-    let expected = TreeExpectation::new()
-        .root("e4", |n| n)
-        .root_variation("d4", |n| n);
+    assert!(tree.root.find_child("e4").is_some(), "root should have e4");
+    assert!(tree.root.find_child("d4").is_some(), "root should have d4 variation");
 
-    assert_tree_contains!(tree, expected);
+    // Verify each main line continues
+    let expected_e4 = game_tree! { e4 { e5 { Nf3 } } };
+    assert_contains_tree!(tree, expected_e4);
 }
 
 #[test]
@@ -422,16 +512,17 @@ fn test_parse_deeply_nested_variations() {
     let pgn = r#"1. e4 (1. d4 (1. c4 (1. Nf3 d5) c5) d5) e5 *"#;
     let tree = parse_pgn(pgn);
 
-    // All opening moves are siblings of e4
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n.has_child("e5"))
-        .root_variation("d4", |n| n)
-        .root_variation("c4", |n| n)
-        .root_variation("Nf3", |n| n);
+    assert_eq!(tree.result, GameResult::Ongoing);
 
-    assert_tree_contains!(tree, expected);
-    assert!(count_nodes(&tree) > 4);
+    // All opening moves are siblings at root level
+    assert!(tree.root.find_child("e4").is_some(), "root should have e4");
+    assert!(tree.root.find_child("d4").is_some(), "root should have d4");
+    assert!(tree.root.find_child("c4").is_some(), "root should have c4");
+    assert!(tree.root.find_child("Nf3").is_some(), "root should have Nf3");
+
+    // Verify e4 has e5 as child
+    let expected_e4 = game_tree! { e4 { e5 } };
+    assert_contains_tree!(tree, expected_e4);
 }
 
 #[test]
@@ -439,23 +530,39 @@ fn test_variation_after_every_move() {
     let pgn = "1. e4 (1. d4) e5 (1... c5) 2. Nf3 (2. Bc4) Nc6 (2... Nf6) *";
     let tree = parse_pgn(pgn);
 
-    // Variations at multiple points
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .has_variations() // e5 and c5
-            .child("e5", |n| n
-                .has_variations() // Nf3 and Bc4
-            )
-        )
-        .root_variation("d4", |n| n);
+    assert_eq!(tree.result, GameResult::Ongoing);
 
-    assert_tree_contains!(tree, expected);
+    // Check root-level variations
+    assert!(tree.root.find_child("e4").is_some(), "root should have e4");
+    assert!(tree.root.find_child("d4").is_some(), "root should have d4 variation");
+
+    // Verify the main line structure with variations at each level
+    let expected = game_tree! {
+        e4 {
+            e5 {
+                Nf3 { Nc6, Nf6 },
+                Bc4
+            },
+            c5
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 // ============================================================================
 // CLOCK AND EVAL TESTS
 // ============================================================================
+
+const LICHESS_CLOCKS: &str = r#"[Event "Rated Blitz"]
+[Site "https://lichess.org"]
+[Date "2024.01.15"]
+[Round "?"]
+[White "Player1"]
+[Black "Player2"]
+[Result "1-0"]
+[TimeControl "180+0"]
+
+1. e4 {[%clk 0:03:00]} e5 {[%clk 0:03:00]} 2. Nf3 {[%clk 0:02:58]} Nc6 {[%clk 0:02:59]} 1-0"#;
 
 #[test]
 fn test_parse_lichess_clocks() {
@@ -465,11 +572,27 @@ fn test_parse_lichess_clocks() {
     assert!(e4.comment.contains("%clk") || e4.comment.contains("clk") || e4.comment.is_empty() || !e4.comment.is_empty());
 }
 
+const EVAL_ANNOTATIONS: &str = r#"1. e4 {[%eval 0.25]} e5 {[%eval 0.20]} 2. Nf3 {[%eval 0.35]} Nc6 {[%eval 0.30]} *"#;
+
 #[test]
 fn test_parse_eval_annotations() {
     let tree = parse_pgn(EVAL_ANNOTATIONS);
     assert!(count_nodes(&tree) > 0);
+
+    // Verify structure has comments with eval
+    let expected = game_tree! {
+        e4 (comment: "%eval") {
+            e5 (comment: "%eval") {
+                Nf3 (comment: "%eval") {
+                    Nc6 (comment: "%eval")
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
+
+const MATE_EVAL: &str = r#"1. f3 e5 2. g4 {[%eval #-1]} Qh4# {[%eval #0]} 0-1"#;
 
 #[test]
 fn test_parse_mate_eval() {
@@ -477,11 +600,15 @@ fn test_parse_mate_eval() {
     assert_eq!(tree.result, GameResult::BlackWins);
 }
 
+const CLOCK_AND_EVAL: &str = r#"1. e4 {[%clk 0:03:00] [%eval 0.25]} e5 {[%clk 0:03:00] [%eval 0.20]} *"#;
+
 #[test]
 fn test_parse_combined_clock_eval() {
     let tree = parse_pgn(CLOCK_AND_EVAL);
     assert!(count_nodes(&tree) >= 2);
 }
+
+const EMT_ANNOTATIONS: &str = r#"1. e4 {[%emt 0:00:05]} e5 {[%emt 0:00:03]} 2. Nf3 {[%emt 0:00:02]} *"#;
 
 #[test]
 fn test_parse_emt_annotations() {
@@ -493,11 +620,19 @@ fn test_parse_emt_annotations() {
 // GAME TERMINATION TESTS
 // ============================================================================
 
+const WHITE_WINS: &str = r#"[Result "1-0"]
+
+1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0"#;
+
 #[test]
 fn test_parse_white_wins() {
     let tree = parse_pgn(WHITE_WINS);
     assert_eq!(tree.result, GameResult::WhiteWins);
 }
+
+const BLACK_WINS: &str = r#"[Result "0-1"]
+
+1. f3 e5 2. g4 Qh4# 0-1"#;
 
 #[test]
 fn test_parse_black_wins() {
@@ -505,11 +640,19 @@ fn test_parse_black_wins() {
     assert_eq!(tree.result, GameResult::BlackWins);
 }
 
+const DRAW_GAME: &str = r#"[Result "1/2-1/2"]
+
+1. e4 e5 2. Nf3 Nf6 3. Nxe5 d6 4. Nf3 Nxe4 1/2-1/2"#;
+
 #[test]
 fn test_parse_draw() {
     let tree = parse_pgn(DRAW_GAME);
     assert_eq!(tree.result, GameResult::Draw);
 }
+
+const ONGOING_GAME: &str = r#"[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 *"#;
 
 #[test]
 fn test_parse_ongoing() {
@@ -529,6 +672,26 @@ fn test_parse_termination_markers(pgn: &str) -> GameResult {
 // MULTI-GAME TESTS
 // ============================================================================
 
+const TWO_GAMES: &str = r#"[Event "Game 1"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "1"]
+[White "White1"]
+[Black "Black1"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 1-0
+
+[Event "Game 2"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "2"]
+[White "White2"]
+[Black "Black2"]
+[Result "0-1"]
+
+1. d4 d5 2. c4 0-1"#;
+
 #[test]
 fn test_parse_two_games() {
     use pgnq::parser::parse_all;
@@ -541,6 +704,36 @@ fn test_parse_two_games() {
     assert_eq!(games[0].header("Event"), Some("Game 1"));
     assert_eq!(games[1].header("Event"), Some("Game 2"));
 }
+
+const THREE_GAMES: &str = r#"[Event "Complete Game"]
+[Site "?"]
+[Date "2024.01.01"]
+[Round "1"]
+[White "A"]
+[Black "B"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 1-0
+
+[Event "Ongoing Game"]
+[Site "?"]
+[Date "2024.01.02"]
+[Round "2"]
+[White "C"]
+[Black "D"]
+[Result "*"]
+
+1. d4 d5 *
+
+[Event "Draw"]
+[Site "?"]
+[Date "2024.01.03"]
+[Round "3"]
+[White "E"]
+[Black "F"]
+[Result "1/2-1/2"]
+
+1. c4 c5 1/2-1/2"#;
 
 #[test]
 fn test_parse_three_games() {
@@ -556,6 +749,16 @@ fn test_parse_three_games() {
 // HEADER EDGE CASE TESTS
 // ============================================================================
 
+const UNICODE_HEADERS: &str = r#"[Event "International"]
+[Site "München, Germany"]
+[Date "2024.01.15"]
+[Round "1"]
+[White "Müller, Hans"]
+[Black "Карлсен, Магнус"]
+[Result "*"]
+
+1. e4 e5 *"#;
+
 #[test]
 fn test_parse_unicode_headers() {
     let tree = parse_pgn(UNICODE_HEADERS);
@@ -564,12 +767,38 @@ fn test_parse_unicode_headers() {
     assert!(tree.header("Black").is_some());
 }
 
+const LONG_HEADER: &str = r#"[Event "This is an extremely long event name that goes on and on to test how the parser handles very long header values in PGN files"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+
+1. e4 *"#;
+
 #[test]
 fn test_parse_long_header() {
     let tree = parse_pgn(LONG_HEADER);
     let event = tree.header("Event").unwrap();
     assert!(event.len() > 50);
 }
+
+const CUSTOM_TAGS: &str = r#"[Event "Test"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+[Annotator "John Doe"]
+[ECO "C50"]
+[Opening "Italian Game"]
+[PlyCount "10"]
+[TimeControl "300+5"]
+[Termination "Normal"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. O-O Nf6 5. d3 *"#;
 
 #[test]
 fn test_parse_custom_tags() {
@@ -578,6 +807,16 @@ fn test_parse_custom_tags() {
     assert_eq!(tree.header("ECO"), Some("C50"));
     assert_eq!(tree.header("Opening"), Some("Italian Game"));
 }
+
+const PARTIAL_DATE: &str = r#"[Event "?"]
+[Site "?"]
+[Date "2024.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+
+1. e4 *"#;
 
 #[test]
 fn test_parse_partial_date() {
@@ -597,26 +836,74 @@ fn test_parse_all_unknown_date() {
 // REAL-WORLD FORMAT TESTS
 // ============================================================================
 
+const LICHESS_EXPORT: &str = r#"[Event "Rated Blitz game"]
+[Site "https://lichess.org/abcd1234"]
+[Date "2024.01.15"]
+[Round "?"]
+[White "player1"]
+[Black "player2"]
+[Result "1-0"]
+[UTCDate "2024.01.15"]
+[UTCTime "14:30:00"]
+[WhiteElo "1850"]
+[BlackElo "1820"]
+[WhiteRatingDiff "+8"]
+[BlackRatingDiff "-8"]
+[Variant "Standard"]
+[TimeControl "180+0"]
+[ECO "C50"]
+[Termination "Normal"]
+
+1. e4 {[%clk 0:03:00]} e5 {[%clk 0:03:00]} 2. Nf3 {[%clk 0:02:58]} Nc6 {[%clk 0:02:59]} 3. Bc4 {[%clk 0:02:55]} Bc5 {[%clk 0:02:57]} 4. O-O {[%clk 0:02:52]} Nf6 {[%clk 0:02:54]} 5. d3 {[%clk 0:02:50]} O-O {[%clk 0:02:51]} 1-0"#;
+
 #[test]
 fn test_parse_lichess_export() {
     let tree = parse_pgn(LICHESS_EXPORT);
-    assert_eq!(tree.header("Variant"), Some("Standard"));
-    assert_eq!(tree.header("TimeControl"), Some("180+0"));
+    assert_eq!(tree.header("Event"), Some("Rated Blitz game"));
+    assert_eq!(tree.header("Site"), Some("https://lichess.org/abcd1234"));
     assert!(tree.header("WhiteElo").is_some());
+    assert_eq!(tree.header("ECO"), Some("C50"));
 }
+
+const ANNOTATED_GAME: &str = r#"[Event "World Championship"]
+[Site "Reykjavik ISL"]
+[Date "1972.07.23"]
+[Round "6"]
+[White "Fischer, Robert J."]
+[Black "Spassky, Boris V."]
+[Result "1-0"]
+[ECO "D59"]
+
+1. c4 {Fischer avoids 1.e4 for the first time in the match} e6 2. Nf3 d5 3. d4 Nf6 4. Nc3 Be7 5. Bg5 O-O 6. e3 h6 7. Bh4 b6 {The Tartakower Defense} 8. cxd5 Nxd5 9. Bxe7 Qxe7 10. Nxd5 exd5 11. Rc1 Be6 12. Qa4 c5 13. Qa3 Rc8 14. Bb5! {An excellent move, putting pressure on the queenside} (14. Be2 {was also possible} cxd4 15. Nxd4 Qb4) 14... a6 15. dxc5 bxc5 16. O-O Ra7 17. Be2 Nd7 18. Nd4! {A strong knight maneuver} Qf8 (18... Nf6 19. Nxe6 fxe6 20. Bg4 $14) 19. Nxe6 fxe6 20. e4! $1 {Opening up the position with Black's king exposed} d4 21. f4 Qe7 22. e5 Rb8 23. Bc4 Kh8 24. Qh3 Nf8 25. b3 a5 26. f5! exf5 27. Rxf5 Nh7 28. Rcf1 {White has a crushing attack} Qd8 29. Qg3 Re7 30. h4 Rbb7 31. e6! Rbc7 32. Qe5 Qe8 33. a4 Qd8 34. R1f2 Qe8 35. R2f3 Qd8 36. Bd3 Qe8 37. Qe4 Nf6 38. Rxf6! gxf6 39. Rxf6 Kg8 40. Bc4 Kh8 41. Qf4 1-0"#;
 
 #[test]
 fn test_parse_annotated_game() {
     let tree = parse_pgn(ANNOTATED_GAME);
     assert_eq!(tree.header("Event"), Some("World Championship"));
-    assert_eq!(tree.header("White"), Some("Fischer, Robert J."));
+    assert_eq!(tree.header("ECO"), Some("D59"));
     // Should have variations and comments
     assert!(count_nodes(&tree) > 30);
 }
 
 #[test]
 fn test_parse_lichess_study() {
-    let tree = parse_pgn(LICHESS_STUDY);
+    let pgn = r#"[Event "Opening Repertoire: Sicilian"]
+[Site "https://lichess.org/study/abc123"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+[Annotator "ChessCoach"]
+[UTCDate "2024.01.15"]
+[UTCTime "10:00:00"]
+[Variant "Standard"]
+[ECO "B90"]
+[Opening "Sicilian Defense: Najdorf Variation"]
+
+1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6 {The Najdorf Variation - one of Black's most aggressive defenses} 6. Be3 (6. Bg5 {The main alternative} e6 7. f4 Be7 8. Qf3 Qc7 9. O-O-O Nbd7) (6. Be2 {A quieter approach} e5 7. Nb3 Be7 8. O-O O-O) (6. f3 {The English Attack} e5 7. Nb3 Be6 8. Be3 Be7 9. Qd2 O-O 10. O-O-O) 6... e5 7. Nb3 Be6 8. f3 Be7 9. Qd2 O-O 10. O-O-O *"#;
+
+    let tree = parse_pgn(pgn);
     assert_eq!(tree.header("Opening"), Some("Sicilian Defense: Najdorf Variation"));
     // Should have multiple variations
     let e4 = tree.root.find_child("e4").unwrap();
@@ -1026,16 +1313,14 @@ fn test_parse_multiple_variations_same_point() {
     let tree = parse_pgn(pgn);
 
     // Root should have 5 children: e4 + 4 variations
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n.leaf("e5"))
-        .root_variation("d4", |n| n)
-        .root_variation("c4", |n| n)
-        .root_variation("Nf3", |n| n)
-        .root_variation("g3", |n| n);
-
-    assert_tree_contains!(tree, expected);
+    assert_eq!(tree.result, GameResult::Ongoing);
     assert_eq!(tree.root.children.len(), 5);
+    let e4 = tree.root.find_child("e4").expect("should have e4");
+    assert!(e4.find_child("e5").is_some(), "e4 should have e5");
+    assert!(tree.root.find_child("d4").is_some(), "should have d4");
+    assert!(tree.root.find_child("c4").is_some(), "should have c4");
+    assert!(tree.root.find_child("Nf3").is_some(), "should have Nf3");
+    assert!(tree.root.find_child("g3").is_some(), "should have g3");
 }
 
 #[test]
@@ -1044,21 +1329,15 @@ fn test_parse_variation_with_sub_variations() {
     let tree = parse_pgn(pgn);
 
     // Main line and Sicilian variation with sub-variations
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .has_variations()
-            .child("e5", |n| n
-                .leaf("Nf3")
-            )
-            .variation("c5", |n| n
-                .has_variations() // Nf3 main and Nc3 variation
-                .has_child("Nf3")
-                .has_child("Nc3")
-            )
-        );
-
-    assert_tree_contains!(tree, expected);
+    assert_eq!(tree.result, GameResult::Ongoing);
+    let e4 = tree.root.find_child("e4").expect("should have e4");
+    assert!(e4.children.len() > 1, "e4 should have variations");
+    let e5 = e4.find_child("e5").expect("e4 should have e5");
+    assert!(e5.find_child("Nf3").is_some(), "e5 should have Nf3");
+    let c5 = e4.find_child("c5").expect("e4 should have c5");
+    assert!(c5.children.len() > 1, "c5 should have variations");
+    assert!(c5.find_child("Nf3").is_some(), "c5 should have Nf3");
+    assert!(c5.find_child("Nc3").is_some(), "c5 should have Nc3");
 }
 
 #[test]
@@ -1067,20 +1346,14 @@ fn test_parse_variation_at_every_move_comprehensive() {
     let tree = parse_pgn(pgn);
 
     // Multiple variations throughout the game
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .has_variations() // e5 and c5
-            .child("e5", |n| n
-                .has_variations() // Nf3 and Bc4
-                .child("Nf3", |n| n
-                    .has_variations() // Nc6 and Nf6
-                )
-            )
-        )
-        .root_variation("d4", |n| n);
-
-    assert_tree_contains!(tree, expected);
+    assert_eq!(tree.result, GameResult::Ongoing);
+    let e4 = tree.root.find_child("e4").expect("should have e4");
+    assert!(e4.children.len() > 1, "e4 should have variations (e5 and c5)");
+    let e5 = e4.find_child("e5").expect("e4 should have e5");
+    assert!(e5.children.len() > 1, "e5 should have variations (Nf3 and Bc4)");
+    let nf3 = e5.find_child("Nf3").expect("e5 should have Nf3");
+    assert!(nf3.children.len() > 1, "Nf3 should have variations (Nc6 and Nf6)");
+    assert!(tree.root.find_child("d4").is_some(), "should have d4 variation");
 }
 
 #[test]
@@ -1090,29 +1363,15 @@ fn test_parse_long_variation() {
     let tree = parse_pgn(pgn);
 
     // Verify the Sicilian variation is present with deep continuation
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .has_variations()
-            .child("e5", |n| n.leaf("Nf3"))
-            .variation("c5", |n| n
-                .child("Nf3", |n| n
-                    .child("d6", |n| n
-                        .child("d4", |n| n
-                            .child("cxd4", |n| n
-                                .child("Nxd4", |n| n
-                                    .child("Nf6", |n| n
-                                        .has_child("Nc3")
-                                    )
-                                )
-                            )
-                        )
-                    )
-                )
-            )
-        );
-
-    assert_tree_contains!(tree, expected);
+    assert_eq!(tree.result, GameResult::Ongoing);
+    let e4 = tree.root.find_child("e4").expect("should have e4");
+    assert!(e4.children.len() > 1, "e4 should have variations");
+    let e5 = e4.find_child("e5").expect("e4 should have e5");
+    assert!(e5.find_child("Nf3").is_some(), "e5 should have Nf3");
+    let c5 = e4.find_child("c5").expect("e4 should have c5 variation");
+    // Verify deep path in Sicilian variation
+    assert!(tree.find_path(&["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3"]).is_some(),
+        "Should have deep Sicilian variation path");
 }
 
 // ============================================================================

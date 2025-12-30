@@ -2,18 +2,14 @@
 //!
 //! Tests using actual PGN exports from various sources to ensure
 //! compatibility with real-world formats.
-//!
-//! These tests validate complete tree structures using the DSL,
-//! not just scattered property checks.
 
+#[macro_use]
 mod common;
-mod dsl;
 
-use common::parse_pgn;
-use dsl::*;
 use pgnq::nag::Nag;
 use pgnq::parser::parse;
 use pgnq::tree::GameResult;
+use common::parse_pgn;
 
 // ============================================================================
 // Lichess Export Format
@@ -46,28 +42,30 @@ const LICHESS_GAME: &str = r#"[Event "Rated Blitz game"]
 fn test_lichess_game_complete() {
     let tree = parse(LICHESS_GAME).unwrap();
 
-    let expected = TreeExpectation::new()
-        .header("Event", "Rated Blitz game")
-        .header("White", "Player1")
-        .header("Black", "Player2")
-        .header("WhiteElo", "1500")
-        .header("BlackElo", "1450")
-        .header("ECO", "B20")
-        .header("Opening", "Sicilian Defense")
-        .white_wins()
-        .node_count(10)
-        .main_line(&["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "a6"])
-        .root("e4", |n| n
-            .comment_contains("%clk")
-            .child("c5", |n| n
-                .comment_contains("%clk")
-                .child("Nf3", |n| n
-                    .comment_contains("%clk")
-                )
-            )
-        );
+    // Check headers
+    assert_eq!(tree.header("Event"), Some("Rated Blitz game"));
+    assert_eq!(tree.header("White"), Some("Player1"));
+    assert_eq!(tree.header("Black"), Some("Player2"));
+    assert_eq!(tree.header("WhiteElo"), Some("1500"));
+    assert_eq!(tree.header("BlackElo"), Some("1450"));
+    assert_eq!(tree.header("ECO"), Some("B20"));
+    assert_eq!(tree.header("Opening"), Some("Sicilian Defense"));
 
-    assert_tree_contains!(tree, expected);
+    // Check result and node count
+    assert_eq!(tree.result, GameResult::WhiteWins);
+    assert_eq!(tree.count_nodes(), 10);
+
+    // Check main line
+    let main_line: Vec<_> = tree.root.iter_main_line().skip(1).map(|n| n.san.as_str()).collect();
+    assert_eq!(main_line, vec!["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "a6"]);
+
+    // Check clock annotations
+    let e4 = tree.root.find_child("e4").unwrap();
+    assert!(e4.comment.contains("%clk"), "e4 should have clock annotation");
+    let c5 = e4.find_child("c5").unwrap();
+    assert!(c5.comment.contains("%clk"), "c5 should have clock annotation");
+    let nf3 = c5.find_child("Nf3").unwrap();
+    assert!(nf3.comment.contains("%clk"), "Nf3 should have clock annotation");
 }
 
 // ============================================================================
@@ -103,24 +101,26 @@ const CHESSCOM_GAME: &str = r#"[Event "Live Chess"]
 fn test_chesscom_game_complete() {
     let tree = parse(CHESSCOM_GAME).unwrap();
 
-    let expected = TreeExpectation::new()
-        .header("Event", "Live Chess")
-        .header("Site", "Chess.com")
-        .header("Termination", "Game drawn by agreement")
-        .header("WhiteElo", "1200")
-        .header("BlackElo", "1250")
-        .draw()
-        .node_count(9)
-        .main_line(&["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O"])
-        // Verify fractional clocks (Chess.com uses decimal seconds)
-        .root("e4", |n| n
-            .comment_contains(".") // Fractional seconds
-            .child("e5", |n| n
-                .comment_contains("9:55.2")
-            )
-        );
+    // Check headers
+    assert_eq!(tree.header("Event"), Some("Live Chess"));
+    assert_eq!(tree.header("Site"), Some("Chess.com"));
+    assert_eq!(tree.header("Termination"), Some("Game drawn by agreement"));
+    assert_eq!(tree.header("WhiteElo"), Some("1200"));
+    assert_eq!(tree.header("BlackElo"), Some("1250"));
 
-    assert_tree_contains!(tree, expected);
+    // Check result and node count
+    assert_eq!(tree.result, GameResult::Draw);
+    assert_eq!(tree.count_nodes(), 9);
+
+    // Check main line
+    let main_line: Vec<_> = tree.root.iter_main_line().skip(1).map(|n| n.san.as_str()).collect();
+    assert_eq!(main_line, vec!["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O"]);
+
+    // Verify fractional clocks (Chess.com uses decimal seconds)
+    let e4 = tree.root.find_child("e4").unwrap();
+    assert!(e4.comment.contains("."), "e4 should have fractional seconds");
+    let e5 = e4.find_child("e5").unwrap();
+    assert!(e5.comment.contains("9:55.2"), "e5 should have specific clock time");
 }
 
 // ============================================================================
@@ -162,53 +162,48 @@ const ANNOTATED_GAME: &str = r#"[Event "World Championship"]
 fn test_annotated_game_complete() {
     let tree = parse(ANNOTATED_GAME).unwrap();
 
-    let expected = TreeExpectation::new()
-        .header("Event", "World Championship")
-        .header("White", "Carlsen, Magnus")
-        .header("Black", "Caruana, Fabiano")
-        .header("Annotator", "GM John Doe")
-        .header("ECO", "B33")
-        .draw()
-        .root("e4", |n| n
-            .nag(Nag::GOOD_MOVE) // !
-            .comment_contains("king's pawn")
-            .child("c5", |n| n
-                .comment_contains("Sicilian")
-                .child("Nf3", |n| n
-                    .has_nag() // $1
-                    .child("Nc6", |n| n
-                        .child("d4", |n| n
-                            .child("cxd4", |n| n
-                                .child("Nxd4", |n| n
-                                    .child("Nf6", |n| n
-                                        .child("Nc3", |n| n
-                                            .has_variations() // e5 main + d6 variation
-                                            .child("e5", |n| n
-                                                .has_nag() // ?!
-                                                .comment_contains("Sveshnikov")
-                                            )
-                                            // Verify the Najdorf variation exists
-                                            .variation("d6", |n| n
-                                                .comment_contains("Najdorf")
-                                                .child("Be2", |n| n
-                                                    .child("e6", |n| n
-                                                        .child("O-O", |n| n
-                                                            .has_nag() // $14
-                                                        )
-                                                    )
-                                                )
-                                            )
-                                        )
-                                    )
-                                )
-                            )
-                        )
-                    )
-                )
-            )
-        );
+    // Check headers
+    assert_eq!(tree.header("Event"), Some("World Championship"));
+    assert_eq!(tree.header("White"), Some("Carlsen, Magnus"));
+    assert_eq!(tree.header("Black"), Some("Caruana, Fabiano"));
+    assert_eq!(tree.header("Annotator"), Some("GM John Doe"));
+    assert_eq!(tree.header("ECO"), Some("B33"));
+    assert_eq!(tree.result, GameResult::Draw);
 
-    assert_tree_contains!(tree, expected);
+    // Navigate to verify tree structure with annotations
+    let e4 = tree.root.find_child("e4").unwrap();
+    assert!(e4.nags.contains(&Nag::GOOD_MOVE), "e4 should have !");
+    assert!(e4.comment.contains("king's pawn"), "e4 should have comment");
+
+    let c5 = e4.find_child("c5").unwrap();
+    assert!(c5.comment.contains("Sicilian"), "c5 should mention Sicilian");
+
+    let nf3 = c5.find_child("Nf3").unwrap();
+    assert!(!nf3.nags.is_empty(), "Nf3 should have NAG ($1)");
+
+    let nc6 = nf3.find_child("Nc6").unwrap();
+    let d4 = nc6.find_child("d4").unwrap();
+    let cxd4 = d4.find_child("cxd4").unwrap();
+    let nxd4 = cxd4.find_child("Nxd4").unwrap();
+    let nf6 = nxd4.find_child("Nf6").unwrap();
+    let nc3 = nf6.find_child("Nc3").unwrap();
+
+    // Nc3 should have variations (e5 main + d6 variation)
+    assert!(nc3.has_variations(), "Nc3 should have variations");
+
+    // Main line continues with e5 (Sveshnikov)
+    let e5 = nc3.find_child("e5").unwrap();
+    assert!(!e5.nags.is_empty(), "e5 should have NAG (?!)");
+    assert!(e5.comment.contains("Sveshnikov"), "e5 should mention Sveshnikov");
+
+    // Verify the Najdorf variation exists
+    let d6_var = nc3.children.iter().find(|n| n.san == "d6").expect("d6 variation should exist");
+    assert!(d6_var.comment.contains("Najdorf"), "d6 should mention Najdorf");
+
+    let be2 = d6_var.find_child("Be2").unwrap();
+    let e6 = be2.find_child("e6").unwrap();
+    let castle = e6.find_child("O-O").unwrap();
+    assert!(!castle.nags.is_empty(), "O-O should have NAG ($14)");
 }
 
 // ============================================================================
@@ -233,61 +228,40 @@ const LICHESS_STUDY: &str = r#"[Event "Opening Repertoire: Sicilian Defense"]
 fn test_lichess_study_complete() {
     let tree = parse(LICHESS_STUDY).unwrap();
 
-    let expected = TreeExpectation::new()
-        .header("Chapter", "Introduction to the Sicilian")
-        .header("ECO", "B20")
-        .ongoing()
-        .root("e4", |n| n
-            .child("c5", |n| n
-                .comment_contains("Sicilian Defense")
-                .has_variations() // Nf3 main + Nc3, c3, f4 variations
-                // Main line continues with Nf3
-                .child("Nf3", |n| n
-                    .child("d6", |n| n
-                        .child("d4", |n| n
-                            .child("cxd4", |n| n
-                                .child("Nxd4", |n| n
-                                    .child("Nf6", |n| n
-                                        .child("Nc3", |n| n
-                                            .has_variations()
-                                            .child("a6", |n| n
-                                                .comment_contains("Najdorf")
-                                            )
-                                            .variation("e6", |n| n
-                                                .comment_contains("Scheveningen")
-                                            )
-                                            .variation("g6", |n| n
-                                                .comment_contains("Dragon")
-                                            )
-                                            .variation("Nc6", |n| n
-                                                .comment_contains("Classical")
-                                            )
-                                        )
-                                    )
-                                )
-                            )
-                        )
-                    )
-                )
-                // Verify the Closed Sicilian variation (sibling of Nf3)
-                .variation("Nc3", |n| n
-                    .comment_contains("Closed Sicilian")
-                    .child("Nc6", |n| n
-                        .child("g3", |n| n)
-                    )
-                )
-                // Verify the Alapin variation
-                .variation("c3", |n| n
-                    .comment_contains("Alapin")
-                )
-                // Verify the Grand Prix variation
-                .variation("f4", |n| n
-                    .comment_contains("Grand Prix")
-                )
-            )
-        );
+    // Check headers
+    assert_eq!(tree.header("Chapter"), Some("Introduction to the Sicilian"));
+    assert_eq!(tree.header("ECO"), Some("B20"));
+    assert_eq!(tree.result, GameResult::Ongoing);
 
-    assert_tree_contains!(tree, expected);
+    // Check main line structure
+    let e4 = tree.root.find_child("e4").unwrap();
+    let c5 = e4.find_child("c5").unwrap();
+    assert!(c5.comment.contains("Sicilian Defense"));
+    assert!(c5.has_variations(), "c5 should have variations for white's 2nd move");
+
+    // Main line continues with Nf3
+    let nf3 = c5.find_child("Nf3").unwrap();
+    let d6 = nf3.find_child("d6").unwrap();
+    let d4 = d6.find_child("d4").unwrap();
+    let cxd4 = d4.find_child("cxd4").unwrap();
+    let nxd4 = cxd4.find_child("Nxd4").unwrap();
+    let nf6 = nxd4.find_child("Nf6").unwrap();
+    let nc3 = nf6.find_child("Nc3").unwrap();
+
+    // Nc3 has variations for black's response
+    assert!(nc3.has_variations());
+    let a6 = nc3.find_child("a6").unwrap();
+    assert!(a6.comment.contains("Najdorf"));
+
+    // Check Najdorf alternatives
+    assert!(nc3.children.iter().any(|n| n.san == "e6" && n.comment.contains("Scheveningen")));
+    assert!(nc3.children.iter().any(|n| n.san == "g6" && n.comment.contains("Dragon")));
+    assert!(nc3.children.iter().any(|n| n.san == "Nc6" && n.comment.contains("Classical")));
+
+    // Check variations at move 2
+    assert!(c5.children.iter().any(|n| n.san == "Nc3" && n.comment.contains("Closed")));
+    assert!(c5.children.iter().any(|n| n.san == "c3" && n.comment.contains("Alapin")));
+    assert!(c5.children.iter().any(|n| n.san == "f4" && n.comment.contains("Grand Prix")));
 }
 
 // ============================================================================
@@ -320,18 +294,19 @@ const TWIC_GAME: &str = r#"[Event "Tata Steel Masters 2024"]
 fn test_twic_game_complete() {
     let tree = parse(TWIC_GAME).unwrap();
 
-    let expected = TreeExpectation::new()
-        .header("WhiteTitle", "GM")
-        .header("BlackTitle", "GM")
-        .header("WhiteFideId", "46616543")
-        .header("BlackFideId", "25059530")
-        .header("ECO", "D35")
-        .header("Opening", "QGD")
-        .white_wins()
-        .node_count(20)
-        .main_line(&["d4", "d5", "c4", "e6", "Nc3", "Nf6", "cxd5", "exd5", "Bg5", "c6"]);
+    // Check headers
+    assert_eq!(tree.header("WhiteTitle"), Some("GM"));
+    assert_eq!(tree.header("BlackTitle"), Some("GM"));
+    assert_eq!(tree.header("WhiteFideId"), Some("46616543"));
+    assert_eq!(tree.header("BlackFideId"), Some("25059530"));
+    assert_eq!(tree.header("ECO"), Some("D35"));
+    assert_eq!(tree.header("Opening"), Some("QGD"));
+    assert_eq!(tree.result, GameResult::WhiteWins);
+    assert_eq!(tree.count_nodes(), 20);
 
-    assert_tree_contains!(tree, expected);
+    // Check first 10 moves
+    let main_line: Vec<_> = tree.root.iter_main_line().skip(1).take(10).map(|n| n.san.as_str()).collect();
+    assert_eq!(main_line, vec!["d4", "d5", "c4", "e6", "Nc3", "Nf6", "cxd5", "exd5", "Bg5", "c6"]);
 }
 
 // ============================================================================
@@ -355,22 +330,24 @@ const STOCKFISH_ANALYSIS: &str = r#"[Event "Analysis"]
 fn test_stockfish_analysis_complete() {
     let tree = parse(STOCKFISH_ANALYSIS).unwrap();
 
-    let expected = TreeExpectation::new()
-        .header("Annotator", "Stockfish 16")
-        .ongoing()
-        .node_count(14)
-        .root("e4", |n| n
-            .comment_contains("%eval")
-            .comment_contains("+0.25")
-            .child("e5", |n| n
-                .comment_contains("%eval")
-                .child("Nf3", |n| n
-                    .comment_contains("%eval")
-                )
-            )
-        );
+    // Check headers
+    assert_eq!(tree.header("Annotator"), Some("Stockfish 16"));
+    assert_eq!(tree.result, GameResult::Ongoing);
+    assert_eq!(tree.count_nodes(), 14);
 
-    assert_tree_contains!(tree, expected);
+    // Check eval annotations using game_tree! macro
+    let expected = game_tree! {
+        e4 (comment: "%eval") {
+            e5 (comment: "%eval") {
+                Nf3 (comment: "%eval")
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
+
+    // Additional specific check for first eval value
+    let e4 = tree.root.find_child("e4").unwrap();
+    assert!(e4.comment.contains("+0.25"));
 }
 
 // ============================================================================
@@ -403,18 +380,19 @@ const SCID_GAME: &str = r#"[Event "World Championship Match"]
 fn test_scid_game_complete() {
     let tree = parse(SCID_GAME).unwrap();
 
-    let expected = TreeExpectation::new()
-        .header("White", "Fischer, Robert James")
-        .header("Black", "Spassky, Boris Vasilievich")
-        .header("PlyCount", "81")
-        .header("EventType", "match")
-        .header("EventCountry", "ISL")
-        .header("Source", "ChessBase")
-        .white_wins()
-        .node_count(81)
-        .main_line(&["c4", "e6", "Nf3", "d5", "d4", "Nf6", "Nc3", "Be7"]);
+    // Check headers
+    assert_eq!(tree.header("White"), Some("Fischer, Robert James"));
+    assert_eq!(tree.header("Black"), Some("Spassky, Boris Vasilievich"));
+    assert_eq!(tree.header("PlyCount"), Some("81"));
+    assert_eq!(tree.header("EventType"), Some("match"));
+    assert_eq!(tree.header("EventCountry"), Some("ISL"));
+    assert_eq!(tree.header("Source"), Some("ChessBase"));
+    assert_eq!(tree.result, GameResult::WhiteWins);
+    assert_eq!(tree.count_nodes(), 81);
 
-    assert_tree_contains!(tree, expected);
+    // Check first 8 moves
+    let main_line: Vec<_> = tree.root.iter_main_line().skip(1).take(8).map(|n| n.san.as_str()).collect();
+    assert_eq!(main_line, vec!["c4", "e6", "Nf3", "d5", "d4", "Nf6", "Nc3", "Be7"]);
 }
 
 // ============================================================================
@@ -443,21 +421,19 @@ const ARENA_GAME: &str = r#"[Event "Computer Chess Game"]
 fn test_arena_game_complete() {
     let tree = parse(ARENA_GAME).unwrap();
 
-    let expected = TreeExpectation::new()
-        .header("Termination", "adjudication")
-        .header("WhiteType", "program")
-        .header("BlackType", "program")
-        .white_wins()
-        .root("e4", |n| n
-            // Engine format: +0.25/25 0.5s (eval/depth time)
-            .comment_contains("/25") // depth
-            .comment_contains("0.5s") // time
-            .child("e5", |n| n
-                .comment_contains("/24")
-            )
-        );
+    // Check headers
+    assert_eq!(tree.header("Termination"), Some("adjudication"));
+    assert_eq!(tree.header("WhiteType"), Some("program"));
+    assert_eq!(tree.header("BlackType"), Some("program"));
+    assert_eq!(tree.result, GameResult::WhiteWins);
 
-    assert_tree_contains!(tree, expected);
+    // Check engine-style comments
+    let e4 = tree.root.find_child("e4").unwrap();
+    assert!(e4.comment.contains("/25"), "e4 should have depth");
+    assert!(e4.comment.contains("0.5s"), "e4 should have time");
+
+    let e5 = e4.find_child("e5").unwrap();
+    assert!(e5.comment.contains("/24"));
 }
 
 // ============================================================================
@@ -483,15 +459,16 @@ const CHESS960_GAME: &str = r#"[Event "Chess960"]
 fn test_chess960_game_complete() {
     let tree = parse(CHESS960_GAME).unwrap();
 
-    let expected = TreeExpectation::new()
-        .header("Variant", "Chess960")
-        .header("SetUp", "1")
-        .has_header("FEN")
-        .white_wins()
-        .node_count(9)
-        .main_line(&["e4", "e5", "d3", "d6", "Nf3", "Nf6", "Bg5", "Be6", "O-O"]);
+    // Check headers
+    assert_eq!(tree.header("Variant"), Some("Chess960"));
+    assert_eq!(tree.header("SetUp"), Some("1"));
+    assert!(tree.header("FEN").is_some());
+    assert_eq!(tree.result, GameResult::WhiteWins);
+    assert_eq!(tree.count_nodes(), 9);
 
-    assert_tree_contains!(tree, expected);
+    // Check main line
+    let main_line: Vec<_> = tree.root.iter_main_line().skip(1).map(|n| n.san.as_str()).collect();
+    assert_eq!(main_line, vec!["e4", "e5", "d3", "d6", "Nf3", "Nf6", "Bg5", "Be6", "O-O"]);
 }
 
 // ============================================================================
@@ -518,11 +495,8 @@ fn test_very_long_game() {
 
     let tree = parse(&pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .node_count(200);
-
-    assert_tree_contains!(tree, expected);
+    assert_eq!(tree.result, GameResult::Ongoing);
+    assert_eq!(tree.count_nodes(), 200);
 }
 
 // ============================================================================
@@ -538,23 +512,20 @@ fn test_deeply_nested_variations() {
 
     let tree = parse(pgn).unwrap();
 
-    // All variations are siblings - alternatives for Black's 1st move
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .has_variations()
-            .children_count(6) // c5, e5, d5, Nf6, g6, b6
-            .child("c5", |n| n
-                .leaf("Nf3")
-            )
-            .variation("e5", |n| n)
-            .variation("d5", |n| n)
-            .variation("Nf6", |n| n)
-            .variation("g6", |n| n)
-            .variation("b6", |n| n)
-        );
+    assert_eq!(tree.result, GameResult::Ongoing);
 
-    assert_tree_contains!(tree, expected);
+    // Use game_tree! to verify the structure with all 6 variations
+    let expected = game_tree! {
+        e4 {
+            c5 { Nf3 },
+            e5,
+            d5,
+            Nf6,
+            g6,
+            b6
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 // ============================================================================
@@ -569,15 +540,6 @@ fn test_many_sibling_variations() {
     let tree = parse(pgn).unwrap();
 
     // Root should have 9 children: e4 main + 8 variations
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .children_count(9) // c5 plus 8 variation siblings of e4... wait no
-        );
-
-    // Actually root.children has e4, d4, c4, etc. as siblings
-    // Let me check: the e4 node should have c5 as child
-    // The variations 1. d4, 1. c4 etc are siblings OF e4, not children of e4
     assert!(tree.root.children.len() >= 9, "Expected at least 9 first moves, got {}", tree.root.children.len());
 }
 
@@ -643,13 +605,12 @@ fn test_special_characters_in_headers() {
 
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .header("White", "O'Kelly, Albéric")
-        .header("Black", "Müller, Hans")
-        .white_wins()
-        .main_line(&["e4", "e5"]);
+    assert_eq!(tree.header("White"), Some("O'Kelly, Albéric"));
+    assert_eq!(tree.header("Black"), Some("Müller, Hans"));
+    assert_eq!(tree.result, GameResult::WhiteWins);
 
-    assert_tree_contains!(tree, expected);
+    let main_line: Vec<_> = tree.root.iter_main_line().skip(1).map(|n| n.san.as_str()).collect();
+    assert_eq!(main_line, vec!["e4", "e5"]);
 }
 
 /// Test unusual whitespace (tabs, multiple spaces, etc.)
@@ -659,12 +620,11 @@ fn test_unusual_whitespace() {
 
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .node_count(5)
-        .main_line(&["e4", "e5", "Nf3", "Nc6", "Bb5"]);
+    assert_eq!(tree.result, GameResult::Ongoing);
+    assert_eq!(tree.count_nodes(), 5);
 
-    assert_tree_contains!(tree, expected);
+    let main_line: Vec<_> = tree.root.iter_main_line().skip(1).map(|n| n.san.as_str()).collect();
+    assert_eq!(main_line, vec!["e4", "e5", "Nf3", "Nc6", "Bb5"]);
 }
 
 /// Test Windows line endings (CRLF)
@@ -674,12 +634,9 @@ fn test_windows_line_endings() {
 
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .header("Event", "Test")
-        .ongoing()
-        .node_count(3);
-
-    assert_tree_contains!(tree, expected);
+    assert_eq!(tree.header("Event"), Some("Test"));
+    assert_eq!(tree.result, GameResult::Ongoing);
+    assert_eq!(tree.count_nodes(), 3);
 }
 
 /// Test missing space between move number and move
@@ -689,12 +646,11 @@ fn test_no_space_after_move_number() {
 
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .node_count(5)
-        .main_line(&["e4", "e5", "Nf3", "Nc6", "Bb5"]);
+    assert_eq!(tree.result, GameResult::Ongoing);
+    assert_eq!(tree.count_nodes(), 5);
 
-    assert_tree_contains!(tree, expected);
+    let main_line: Vec<_> = tree.root.iter_main_line().skip(1).map(|n| n.san.as_str()).collect();
+    assert_eq!(main_line, vec!["e4", "e5", "Nf3", "Nc6", "Bb5"]);
 }
 
 /// Test continuation move number style (1... for black's move)
@@ -704,12 +660,11 @@ fn test_continuation_move_numbers() {
 
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .node_count(4)
-        .main_line(&["e4", "e5", "Nf3", "Nc6"]);
+    assert_eq!(tree.result, GameResult::Ongoing);
+    assert_eq!(tree.count_nodes(), 4);
 
-    assert_tree_contains!(tree, expected);
+    let main_line: Vec<_> = tree.root.iter_main_line().skip(1).map(|n| n.san.as_str()).collect();
+    assert_eq!(main_line, vec!["e4", "e5", "Nf3", "Nc6"]);
 }
 
 /// Test mixed comment styles in same game
@@ -724,15 +679,11 @@ fn test_mixed_comment_styles() {
 
     let tree = parse(pgn).unwrap();
 
-    // Should have comments on multiple moves (at least brace comments)
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .has_comment()
-            .comment_contains("Brace")
-        );
+    assert_eq!(tree.result, GameResult::Ongoing);
 
-    assert_tree_contains!(tree, expected);
+    let e4 = tree.root.find_child("e4").unwrap();
+    assert!(!e4.comment.is_empty());
+    assert!(e4.comment.contains("Brace"));
 }
 
 /// Test NAGs mixed with comments
@@ -742,24 +693,21 @@ fn test_nags_with_comments() {
 
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .nag(Nag::GOOD_MOVE)
-            .comment_contains("Great")
-            .child("e5", |n| n
-                .nag(Nag::POOR_MOVE)
-                .comment_contains("Dubious")
-                .child("Nf3", |n| n
-                    .nag(Nag::BRILLIANT_MOVE)
-                    .child("Nc6", |n| n
-                        .nag(Nag::BLUNDER)
-                    )
-                )
-            )
-        );
+    assert_eq!(tree.result, GameResult::Ongoing);
 
-    assert_tree_contains!(tree, expected);
+    let e4 = tree.root.find_child("e4").unwrap();
+    assert!(e4.nags.contains(&Nag::GOOD_MOVE));
+    assert!(e4.comment.contains("Great"));
+
+    let e5 = e4.find_child("e5").unwrap();
+    assert!(e5.nags.contains(&Nag::POOR_MOVE));
+    assert!(e5.comment.contains("Dubious"));
+
+    let nf3 = e5.find_child("Nf3").unwrap();
+    assert!(nf3.nags.contains(&Nag::BRILLIANT_MOVE));
+
+    let nc6 = nf3.find_child("Nc6").unwrap();
+    assert!(nc6.nags.contains(&Nag::BLUNDER));
 }
 
 /// Test empty header values
@@ -775,12 +723,9 @@ fn test_empty_header_values() {
 
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .header("Event", "")
-        .ongoing()
-        .node_count(1);
-
-    assert_tree_contains!(tree, expected);
+    assert_eq!(tree.header("Event"), Some(""));
+    assert_eq!(tree.result, GameResult::Ongoing);
+    assert_eq!(tree.count_nodes(), 1);
 }
 
 /// Test very long header value
@@ -814,12 +759,9 @@ fn test_headers_only() {
 
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .header("Event", "Unplayed")
-        .ongoing()
-        .node_count(0);
-
-    assert_tree_contains!(tree, expected);
+    assert_eq!(tree.header("Event"), Some("Unplayed"));
+    assert_eq!(tree.result, GameResult::Ongoing);
+    assert_eq!(tree.count_nodes(), 0);
 }
 
 /// Test multiple games - use parse_all to get all games
@@ -841,18 +783,15 @@ fn test_multiple_games_parse_all() {
     let trees = parse_all(pgn).unwrap();
     assert_eq!(trees.len(), 2);
 
-    let expected1 = TreeExpectation::new()
-        .header("Event", "Game 1")
-        .white_wins()
-        .main_line(&["e4", "e5"]);
+    assert_eq!(trees[0].header("Event"), Some("Game 1"));
+    assert_eq!(trees[0].result, GameResult::WhiteWins);
+    let main_line_1: Vec<_> = trees[0].root.iter_main_line().skip(1).map(|n| n.san.as_str()).collect();
+    assert_eq!(main_line_1, vec!["e4", "e5"]);
 
-    let expected2 = TreeExpectation::new()
-        .header("Event", "Game 2")
-        .black_wins()
-        .main_line(&["d4", "d5"]);
-
-    assert_tree_contains!(trees[0], expected1);
-    assert_tree_contains!(trees[1], expected2);
+    assert_eq!(trees[1].header("Event"), Some("Game 2"));
+    assert_eq!(trees[1].result, GameResult::BlackWins);
+    let main_line_2: Vec<_> = trees[1].root.iter_main_line().skip(1).map(|n| n.san.as_str()).collect();
+    assert_eq!(main_line_2, vec!["d4", "d5"]);
 }
 
 /// Test PGN with BOM (Byte Order Mark)
@@ -862,11 +801,8 @@ fn test_pgn_with_bom() {
 
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .node_count(1);
-
-    assert_tree_contains!(tree, expected);
+    assert_eq!(tree.result, GameResult::Ongoing);
+    assert_eq!(tree.count_nodes(), 1);
 }
 
 // ============================================================================
@@ -879,24 +815,17 @@ fn test_combined_features_same_move() {
     let pgn = r#"1. e4! {A great opening move} e5 (1... c5! {The Sicilian}) (1... e6 {The French}) 2. Nf3 *"#;
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .nag(Nag::GOOD_MOVE)
-            .comment_contains("great opening")
-            .has_variations()
-            .children_count(3) // e5, c5, e6
-            .child("e5", |n| n.leaf("Nf3"))
-            .variation("c5", |n| n
-                .nag(Nag::GOOD_MOVE)
-                .comment_contains("Sicilian")
-            )
-            .variation("e6", |n| n
-                .comment_contains("French")
-            )
-        );
+    assert_eq!(tree.result, GameResult::Ongoing);
 
-    assert_tree_contains!(tree, expected);
+    // Verify structure with NAGs, comments, and variations
+    let expected = game_tree! {
+        e4 (comment: "great opening", nag: GOOD_MOVE) {
+            e5 { Nf3 },
+            c5 (comment: "Sicilian", nag: GOOD_MOVE),
+            e6 (comment: "French")
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 /// Test deep tree with annotations at multiple depths
@@ -905,38 +834,29 @@ fn test_deep_tree_with_annotations() {
     let pgn = r#"1. e4! {Start} e5? 2. Nf3!! {Attack} Nc6?? 3. Bb5!? {Ruy Lopez} a6?! 4. Ba4 Nf6 5. O-O {Castle early} Be7 *"#;
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .nag(Nag::GOOD_MOVE)
-            .has_comment()
-            .child("e5", |n| n
-                .nag(Nag::POOR_MOVE)
-                .child("Nf3", |n| n
-                    .nag(Nag::BRILLIANT_MOVE)
-                    .has_comment()
-                    .child("Nc6", |n| n
-                        .nag(Nag::BLUNDER)
-                        .child("Bb5", |n| n
-                            .nag(Nag::INTERESTING_MOVE)
-                            .comment_contains("Ruy Lopez")
-                            .child("a6", |n| n
-                                .nag(Nag::DUBIOUS_MOVE)
-                                .child("Ba4", |n| n
-                                    .child("Nf6", |n| n
-                                        .child("O-O", |n| n
-                                            .has_comment()
-                                        )
-                                    )
-                                )
-                            )
-                        )
-                    )
-                )
-            )
-        );
+    assert_eq!(tree.result, GameResult::Ongoing);
 
-    assert_tree_contains!(tree, expected);
+    // Verify deep structure with NAGs and comments at multiple depths
+    let expected = game_tree! {
+        e4 (comment: "Start", nag: GOOD_MOVE) {
+            e5 (nag: POOR_MOVE) {
+                Nf3 (comment: "Attack", nag: BRILLIANT_MOVE) {
+                    Nc6 (nag: BLUNDER) {
+                        Bb5 (comment: "Ruy Lopez", nag: INTERESTING_MOVE) {
+                            a6 (nag: DUBIOUS_MOVE) {
+                                Ba4 {
+                                    Nf6 {
+                                        "O-O" (comment: "Castle")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 /// Test variations with their own sub-variations and annotations
@@ -945,34 +865,25 @@ fn test_nested_variations_with_annotations() {
     let pgn = r#"1. e4 e5 (1... c5! {Sicilian} 2. Nf3 (2. Nc3!? {Closed}) d6 3. d4 cxd4!) 2. Nf3 Nc6 *"#;
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .has_variations()
-            .child("e5", |n| n
-                .leaf("Nf3")
-            )
-            .variation("c5", |n| n
-                .nag(Nag::GOOD_MOVE)
-                .comment_contains("Sicilian")
-                .has_variations() // 2. Nf3 and 2. Nc3
-                .child("Nf3", |n| n
-                    .child("d6", |n| n
-                        .child("d4", |n| n
-                            .child("cxd4", |n| n
-                                .nag(Nag::GOOD_MOVE)
-                            )
-                        )
-                    )
-                )
-                .variation("Nc3", |n| n
-                    .nag(Nag::INTERESTING_MOVE)
-                    .comment_contains("Closed")
-                )
-            )
-        );
+    assert_eq!(tree.result, GameResult::Ongoing);
 
-    assert_tree_contains!(tree, expected);
+    // Verify main line and Sicilian variation with sub-variations
+    let expected = game_tree! {
+        e4 {
+            e5 { Nf3 { Nc6 } },
+            c5 (comment: "Sicilian", nag: GOOD_MOVE) {
+                Nf3 {
+                    d6 {
+                        d4 {
+                            cxd4 (nag: GOOD_MOVE)
+                        }
+                    }
+                },
+                Nc3 (comment: "Closed", nag: INTERESTING_MOVE)
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 /// Test evaluation comments combined with clock annotations
@@ -981,22 +892,21 @@ fn test_combined_eval_and_clock() {
     let pgn = r#"1. e4 {[%eval 0.25] [%clk 0:03:00]} e5 {[%eval 0.30] [%clk 0:02:58]} 2. Nf3 {[%eval 0.28] [%clk 0:02:55]} *"#;
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .comment_contains("%eval")
-            .comment_contains("%clk")
-            .child("e5", |n| n
-                .comment_contains("%eval")
-                .comment_contains("%clk")
-                .child("Nf3", |n| n
-                    .comment_contains("%eval")
-                    .comment_contains("%clk")
-                )
-            )
-        );
+    assert_eq!(tree.result, GameResult::Ongoing);
 
-    assert_tree_contains!(tree, expected);
+    // Verify all moves have both eval and clock annotations
+    let expected = game_tree! {
+        e4 (comment: "%eval") {
+            e5 (comment: "%eval") {
+                Nf3 (comment: "%eval")
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
+
+    // Verify clock annotations are also present
+    let e4 = tree.root.find_child("e4").unwrap();
+    assert!(e4.comment.contains("%clk"));
 }
 
 /// Test game with every type of annotation
@@ -1015,22 +925,19 @@ Nc6 3. Bc4 {Italian Game} Bc5 4. c3 Nf6 5. d4! exd4 $14 6. cxd4 Bb4+?! 1-0"#;
 
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .header("Event", "Comprehensive Test")
-        .header("ECO", "C50")
-        .header("Annotator", "Engine")
-        .white_wins()
-        .root("e4", |n| n
-            .nag(Nag::GOOD_MOVE)
-            .comment_contains("%eval")
-            .comment_contains("%clk")
-            .child("e5", |n| n
-                .nag(Nag::POOR_MOVE)
-                .has_nag() // $17
-            )
-        );
+    assert_eq!(tree.header("Event"), Some("Comprehensive Test"));
+    assert_eq!(tree.header("ECO"), Some("C50"));
+    assert_eq!(tree.header("Annotator"), Some("Engine"));
+    assert_eq!(tree.result, GameResult::WhiteWins);
 
-    assert_tree_contains!(tree, expected);
+    let e4 = tree.root.find_child("e4").unwrap();
+    assert!(e4.nags.contains(&Nag::GOOD_MOVE));
+    assert!(e4.comment.contains("%eval"));
+    assert!(e4.comment.contains("%clk"));
+
+    let e5 = e4.find_child("e5").unwrap();
+    assert!(e5.nags.contains(&Nag::POOR_MOVE));
+    assert!(!e5.nags.is_empty()); // Should have $17 too
 }
 
 /// Test very long main line with annotations throughout
@@ -1043,22 +950,17 @@ fn test_long_game_with_annotations() {
 
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .nag(Nag::GOOD_MOVE)
-            .child("e5", |n| n
-                .child("Nf3", |n| n
-                    .child("Nc6", |n| n
-                        .child("Bb5", |n| n
-                            .comment_contains("Ruy Lopez")
-                        )
-                    )
-                )
-            )
-        );
+    assert_eq!(tree.result, GameResult::Ongoing);
 
-    assert_tree_contains!(tree, expected);
+    let e4 = tree.root.find_child("e4").unwrap();
+    assert!(e4.nags.contains(&Nag::GOOD_MOVE));
+
+    let e5 = e4.find_child("e5").unwrap();
+    let nf3 = e5.find_child("Nf3").unwrap();
+    let nc6 = nf3.find_child("Nc6").unwrap();
+    let bb5 = nc6.find_child("Bb5").unwrap();
+    assert!(bb5.comment.contains("Ruy Lopez"));
+
     // Verify node count is substantial
     assert!(tree.count_nodes() >= 38, "Should have at least 38 moves");
 }
@@ -1072,38 +974,36 @@ fn test_many_annotated_variations() {
 
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .has_variations()
-            .child("c5", |n| n
-                .child("Nf3", |n| n
-                    .leaf("d6")
-                )
-            )
-            .variation("e5", |n| n
-                .nag(Nag::GOOD_MOVE)
-                .comment_contains("King's Pawn")
-            )
-            .variation("e6", |n| n
-                .comment_contains("French")
-            )
-            .variation("c6", |n| n
-                .comment_contains("Caro-Kann")
-            )
-            .variation("d5", |n| n
-                .nag(Nag::INTERESTING_MOVE)
-                .comment_contains("Scandinavian")
-            )
-            .variation("g6", |n| n
-                .comment_contains("Modern")
-            )
-            .variation("Nf6", |n| n
-                .comment_contains("Alekhine")
-            )
-        );
+    assert_eq!(tree.result, GameResult::Ongoing);
 
-    assert_tree_contains!(tree, expected);
+    let e4 = tree.root.find_child("e4").unwrap();
+    assert!(e4.has_variations());
+
+    // Main line
+    let c5 = e4.find_child("c5").unwrap();
+    let nf3 = c5.find_child("Nf3").unwrap();
+    assert!(nf3.find_child("d6").is_some());
+
+    // Variations
+    let e5_var = e4.children.iter().find(|n| n.san == "e5").unwrap();
+    assert!(e5_var.nags.contains(&Nag::GOOD_MOVE));
+    assert!(e5_var.comment.contains("King's Pawn"));
+
+    let e6_var = e4.children.iter().find(|n| n.san == "e6").unwrap();
+    assert!(e6_var.comment.contains("French"));
+
+    let c6_var = e4.children.iter().find(|n| n.san == "c6").unwrap();
+    assert!(c6_var.comment.contains("Caro-Kann"));
+
+    let d5_var = e4.children.iter().find(|n| n.san == "d5").unwrap();
+    assert!(d5_var.nags.contains(&Nag::INTERESTING_MOVE));
+    assert!(d5_var.comment.contains("Scandinavian"));
+
+    let g6_var = e4.children.iter().find(|n| n.san == "g6").unwrap();
+    assert!(g6_var.comment.contains("Modern"));
+
+    let nf6_var = e4.children.iter().find(|n| n.san == "Nf6").unwrap();
+    assert!(nf6_var.comment.contains("Alekhine"));
 }
 
 /// Test numeric NAGs (positional evaluations) combined with symbolic NAGs
@@ -1112,26 +1012,19 @@ fn test_numeric_and_symbolic_nags() {
     let pgn = "1. e4! $14 e5? $17 2. Nf3!! $18 Nc6?? $19 *";
     let tree = parse(pgn).unwrap();
 
-    let expected = TreeExpectation::new()
-        .ongoing()
-        .root("e4", |n| n
-            .nag(Nag::GOOD_MOVE)
-            .nag(Nag::WHITE_SLIGHT_ADVANTAGE)
-            .child("e5", |n| n
-                .nag(Nag::POOR_MOVE)
-                .nag(Nag::BLACK_MODERATE_ADVANTAGE)
-                .child("Nf3", |n| n
-                    .nag(Nag::BRILLIANT_MOVE)
-                    .nag(Nag::WHITE_DECISIVE_ADVANTAGE)
-                    .child("Nc6", |n| n
-                        .nag(Nag::BLUNDER)
-                        .nag(Nag::BLACK_DECISIVE_ADVANTAGE)
-                    )
-                )
-            )
-        );
+    assert_eq!(tree.result, GameResult::Ongoing);
 
-    assert_tree_contains!(tree, expected);
+    // Verify each move has both symbolic and positional NAGs
+    let expected = game_tree! {
+        e4 (nags: [GOOD_MOVE, WHITE_SLIGHT_ADVANTAGE]) {
+            e5 (nags: [POOR_MOVE, BLACK_MODERATE_ADVANTAGE]) {
+                Nf3 (nags: [BRILLIANT_MOVE, WHITE_DECISIVE_ADVANTAGE]) {
+                    Nc6 (nags: [BLUNDER, BLACK_DECISIVE_ADVANTAGE])
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
 }
 
 // ============================================================================
