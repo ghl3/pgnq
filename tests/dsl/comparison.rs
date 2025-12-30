@@ -5,6 +5,7 @@
 
 use super::expectation::{ChildExpectation, NodeExpectation, TreeExpectation};
 use super::matcher::NagMatcher;
+use pgnq::tree::san::normalize as normalize_san;
 use pgnq::tree::{GameNode, GameTree};
 use std::fmt::Write;
 
@@ -232,6 +233,274 @@ pub fn trees_equal(actual: &GameTree, expected: &GameTree) -> CompareResult {
     }
 }
 
+// ============================================================================
+// GameNode comparison functions (for use with game_tree! macro)
+// ============================================================================
+
+/// Check if actual node tree contains expected structure (subset matching)
+///
+/// This performs a subset match where:
+/// - All nodes in `expected` must exist in `actual` at the same positions
+/// - `actual` may have additional children not in `expected`
+/// - Empty properties in `expected` are not checked (e.g., empty comment = don't check comment)
+/// - Non-empty properties in `expected` must match exactly
+///
+/// # Example
+/// ```ignore
+/// let actual = parse_pgn("1. e4! e5 2. Nf3 *");
+/// let expected = game_tree! { e4 (nag: GOOD_MOVE) { e5 { Nf3 } } };
+/// assert!(node_contains(&actual.root, &expected).is_match());
+/// ```
+pub fn node_contains(actual: &GameNode, expected: &GameNode) -> CompareResult {
+    let mut diffs = Vec::new();
+    check_node_contains_recursive(actual, expected, "root", &mut diffs);
+    if diffs.is_empty() {
+        CompareResult::Match
+    } else {
+        CompareResult::Mismatch(diffs)
+    }
+}
+
+fn check_node_contains_recursive(
+    actual: &GameNode,
+    expected: &GameNode,
+    path: &str,
+    diffs: &mut Vec<Difference>,
+) {
+    // Check SAN (only if expected has a non-empty SAN)
+    if !expected.san.is_empty() {
+        let actual_normalized = normalize_san(&actual.san);
+        let expected_normalized = normalize_san(&expected.san);
+        if actual_normalized != expected_normalized {
+            diffs.push(Difference::new(
+                format!("{} -> san", path),
+                format!("{:?}", expected.san),
+                format!("{:?}", actual.san),
+            ));
+        }
+    }
+
+    // Check comment (only if expected has a non-empty comment)
+    if !expected.comment.is_empty() && actual.comment != expected.comment {
+        diffs.push(Difference::new(
+            format!("{} -> comment", path),
+            format!("{:?}", expected.comment),
+            format!("{:?}", actual.comment),
+        ));
+    }
+
+    // Check NAGs (only if expected has NAGs)
+    if !expected.nags.is_empty() {
+        // All expected NAGs must be present in actual
+        for nag in &expected.nags {
+            if !actual.nags.contains(nag) {
+                diffs.push(Difference::new(
+                    format!("{} -> nags", path),
+                    format!("contains {:?}", nag),
+                    format!("{:?}", actual.nags),
+                ));
+            }
+        }
+    }
+
+    // Check children - each expected child must exist in actual
+    for expected_child in &expected.children {
+        let child_path = if path == "root" {
+            expected_child.san.clone()
+        } else {
+            format!("{} -> {}", path, expected_child.san)
+        };
+
+        match find_child_by_san(actual, &expected_child.san) {
+            Some(actual_child) => {
+                check_node_contains_recursive(actual_child, expected_child, &child_path, diffs);
+            }
+            None => {
+                diffs.push(Difference::new(
+                    child_path,
+                    "child to exist",
+                    format!(
+                        "child not found (available: {:?})",
+                        actual.children.iter().map(|c| &c.san).collect::<Vec<_>>()
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+/// Check if two node trees match exactly
+///
+/// This performs an exact match where:
+/// - Both trees must have identical structure
+/// - All properties must match exactly (even empty ones)
+/// - Children must appear in the same order
+///
+/// # Example
+/// ```ignore
+/// let tree1 = game_tree! { e4 { e5 } };
+/// let tree2 = game_tree! { e4 { e5 } };
+/// assert!(nodes_match(&tree1, &tree2).is_match());
+/// ```
+pub fn nodes_match(actual: &GameNode, expected: &GameNode) -> CompareResult {
+    let mut diffs = Vec::new();
+    check_nodes_match_recursive(actual, expected, "root", &mut diffs);
+    if diffs.is_empty() {
+        CompareResult::Match
+    } else {
+        CompareResult::Mismatch(diffs)
+    }
+}
+
+fn check_nodes_match_recursive(
+    actual: &GameNode,
+    expected: &GameNode,
+    path: &str,
+    diffs: &mut Vec<Difference>,
+) {
+    // Check SAN
+    let actual_normalized = normalize_san(&actual.san);
+    let expected_normalized = normalize_san(&expected.san);
+    if actual_normalized != expected_normalized {
+        diffs.push(Difference::new(
+            format!("{} -> san", path),
+            format!("{:?}", expected.san),
+            format!("{:?}", actual.san),
+        ));
+    }
+
+    // Check comment
+    if actual.comment != expected.comment {
+        diffs.push(Difference::new(
+            format!("{} -> comment", path),
+            format!("{:?}", expected.comment),
+            format!("{:?}", actual.comment),
+        ));
+    }
+
+    // Check NAGs (exact match)
+    if actual.nags != expected.nags {
+        diffs.push(Difference::new(
+            format!("{} -> nags", path),
+            format!("{:?}", expected.nags),
+            format!("{:?}", actual.nags),
+        ));
+    }
+
+    // Check children count
+    if actual.children.len() != expected.children.len() {
+        diffs.push(Difference::new(
+            format!("{} -> children_count", path),
+            expected.children.len().to_string(),
+            actual.children.len().to_string(),
+        ));
+    }
+
+    // Check each child in order
+    let min_children = actual.children.len().min(expected.children.len());
+    for i in 0..min_children {
+        let child_path = format!("{} -> {}", path, expected.children[i].san);
+        check_nodes_match_recursive(&actual.children[i], &expected.children[i], &child_path, diffs);
+    }
+}
+
+/// Find a child node by SAN, using normalized comparison
+fn find_child_by_san<'a>(parent: &'a GameNode, san: &str) -> Option<&'a GameNode> {
+    let normalized = normalize_san(san);
+    parent
+        .children
+        .iter()
+        .find(|c| normalize_san(&c.san) == normalized)
+}
+
+impl CompareResult {
+    /// Format error for node comparison (without GameTree context)
+    pub fn format_node_error(&self, actual: &GameNode, expected: &GameNode) -> String {
+        match self {
+            CompareResult::Match => "Nodes match".to_string(),
+            CompareResult::Mismatch(diffs) => {
+                let mut output = String::new();
+                writeln!(output, "Node comparison failed:").unwrap();
+                writeln!(output).unwrap();
+
+                for diff in diffs {
+                    writeln!(output, "  Location: {}", diff.path).unwrap();
+                    writeln!(output, "  Expected: {}", diff.expected).unwrap();
+                    writeln!(output, "  Actual: {}", diff.actual).unwrap();
+                    writeln!(output).unwrap();
+                }
+
+                // Add tree visualizations
+                writeln!(output, "Expected structure:").unwrap();
+                writeln!(output, "{}", format_node_preview(expected, 5)).unwrap();
+                writeln!(output).unwrap();
+                writeln!(output, "Actual structure:").unwrap();
+                writeln!(output, "{}", format_node_preview(actual, 5)).unwrap();
+
+                output
+            }
+        }
+    }
+}
+
+/// Format a node tree for display (helper for error messages)
+fn format_node_preview(node: &GameNode, max_depth: usize) -> String {
+    let mut output = String::new();
+    format_node_preview_helper(node, "", true, max_depth, 0, &mut output);
+    output
+}
+
+fn format_node_preview_helper(
+    node: &GameNode,
+    prefix: &str,
+    is_last: bool,
+    max_depth: usize,
+    depth: usize,
+    output: &mut String,
+) {
+    if depth > max_depth {
+        if !node.children.is_empty() {
+            writeln!(output, "{}└── ...", prefix).unwrap();
+        }
+        return;
+    }
+
+    let connector = if is_last { "└── " } else { "├── " };
+    let child_prefix = if is_last {
+        format!("{}    ", prefix)
+    } else {
+        format!("{}│   ", prefix)
+    };
+
+    if !node.san.is_empty() {
+        let mut line = node.san.clone();
+        if !node.nags.is_empty() {
+            let nag_str: Vec<_> = node.nags.iter().map(|n| n.to_string()).collect();
+            line.push_str(&format!(" {}", nag_str.join(" ")));
+        }
+        if !node.comment.is_empty() {
+            let comment_preview = if node.comment.len() > 30 {
+                format!("{}...", &node.comment[..27])
+            } else {
+                node.comment.clone()
+            };
+            line.push_str(&format!(" {{{}}}", comment_preview));
+        }
+        writeln!(output, "{}{}{}", prefix, connector, line).unwrap();
+    }
+
+    let children_count = node.children.len();
+    for (i, child) in node.children.iter().enumerate() {
+        let is_last_child = i == children_count - 1;
+        let new_prefix = if node.san.is_empty() {
+            prefix.to_string()
+        } else {
+            child_prefix.clone()
+        };
+        format_node_preview_helper(child, &new_prefix, is_last_child, max_depth, depth + 1, output);
+    }
+}
+
 // Helper: check a node against an expectation
 fn check_node_expectation(
     actual: &GameNode,
@@ -454,11 +723,11 @@ fn format_path(path: &[&str]) -> String {
 // Helper: format tree preview for error messages
 fn format_tree_preview(tree: &GameTree, max_depth: usize) -> String {
     let mut output = String::new();
-    format_node_preview(&tree.root, "", true, max_depth, 0, &mut output);
+    format_tree_node_preview(&tree.root, "", true, max_depth, 0, &mut output);
     output
 }
 
-fn format_node_preview(
+fn format_tree_node_preview(
     node: &GameNode,
     prefix: &str,
     is_last: bool,
@@ -505,7 +774,7 @@ fn format_node_preview(
         } else {
             child_prefix.clone()
         };
-        format_node_preview(child, &new_prefix, is_last_child, max_depth, depth + 1, output);
+        format_tree_node_preview(child, &new_prefix, is_last_child, max_depth, depth + 1, output);
     }
 }
 

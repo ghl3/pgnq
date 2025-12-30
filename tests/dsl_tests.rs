@@ -7,7 +7,7 @@ mod common;
 mod dsl;
 
 use common::parse_pgn;
-use dsl::*;
+use dsl::{tree_contains, TreeExpectation};
 use pgnq::nag::Nag;
 use pgnq::tree::GameResult;
 
@@ -566,4 +566,162 @@ fn test_path_api_combined_with_main_line() {
         .build();
 
     assert_tree_contains!(tree, expected);
+}
+
+// ============================================================================
+// New game_tree! Macro Tests
+// ============================================================================
+
+#[test]
+fn test_game_tree_macro_simple() {
+    let actual = parse_pgn("1. e4 e5 2. Nf3 Nc6 *");
+
+    // New clean macro syntax
+    let expected = game_tree! {
+        e4 { e5 { Nf3 { Nc6 } } }
+    };
+
+    assert_contains_tree!(actual, expected);
+}
+
+#[test]
+fn test_game_tree_macro_with_nag() {
+    let actual = parse_pgn("1. e4! e5? 2. Nf3!! *");
+
+    let expected = game_tree! {
+        e4 (nag: GOOD_MOVE) {
+            e5 (nag: POOR_MOVE) {
+                Nf3 (nag: BRILLIANT_MOVE)
+            }
+        }
+    };
+
+    assert_contains_tree!(actual, expected);
+}
+
+#[test]
+fn test_game_tree_macro_with_comment() {
+    let actual = parse_pgn("1. e4 {King's Pawn opening} e5 *");
+
+    let expected = game_tree! {
+        e4 (comment: "King's Pawn opening") { e5 }
+    };
+
+    assert_contains_tree!(actual, expected);
+}
+
+#[test]
+fn test_game_tree_macro_with_variations() {
+    let actual = parse_pgn("1. e4 e5 (1... c5) (1... e6) *");
+
+    // Variations are expressed as siblings in the macro
+    let expected = game_tree! {
+        e4 {
+            e5,
+            c5,
+            e6
+        }
+    };
+
+    assert_contains_tree!(actual, expected);
+}
+
+#[test]
+fn test_game_tree_macro_complex() {
+    let actual = parse_pgn(r#"
+        1. e4 {King's Pawn} e5 (1... c5 {Sicilian}) 2. Nf3! Nc6 *
+    "#);
+
+    let expected = game_tree! {
+        e4 (comment: "King's Pawn") {
+            e5 {
+                Nf3 (nag: GOOD_MOVE) { Nc6 }
+            },
+            c5 (comment: "Sicilian")
+        }
+    };
+
+    assert_contains_tree!(actual, expected);
+}
+
+#[test]
+fn test_game_tree_macro_castling() {
+    let actual = parse_pgn("1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. O-O *");
+
+    // Use string literals for special moves like O-O
+    let expected = game_tree! {
+        e4 { e5 { Nf3 { Nc6 { Bc4 { Bc5 { "O-O" } } } } } }
+    };
+
+    assert_contains_tree!(actual, expected);
+}
+
+#[test]
+fn test_game_tree_macro_multiple_nags() {
+    let actual = parse_pgn("1. e4 $1$14 e5 *"); // GOOD_MOVE + WHITE_SLIGHT_ADVANTAGE
+
+    let expected = game_tree! {
+        e4 (nags: [GOOD_MOVE, WHITE_SLIGHT_ADVANTAGE]) { e5 }
+    };
+
+    assert_contains_tree!(actual, expected);
+}
+
+#[test]
+fn test_game_tree_macro_deep_tree() {
+    let actual = parse_pgn("1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 *");
+
+    // Deep tree is still readable without pyramid of doom
+    let expected = game_tree! {
+        e4 { c5 { Nf3 { d6 { d4 { cxd4 { Nxd4 { Nf6 } } } } } } }
+    };
+
+    assert_contains_tree!(actual, expected);
+}
+
+#[test]
+fn test_game_tree_macro_comparison_with_old_api() {
+    let actual = parse_pgn("1. e4! e5 2. Nf3 *");
+
+    // Old closure-based API (verbose, 9 lines)
+    let expected_old = TreeExpectation::new()
+        .ongoing()
+        .root("e4", |n| n
+            .nag(Nag::GOOD_MOVE)
+            .child("e5", |n| n
+                .leaf("Nf3")
+            )
+        );
+
+    // New macro API (concise, 3 lines)
+    let expected_new = game_tree! {
+        e4 (nag: GOOD_MOVE) { e5 { Nf3 } }
+    };
+
+    // Both work
+    assert_tree_contains!(actual, expected_old);
+    assert_contains_tree!(actual, expected_new);
+}
+
+#[test]
+fn test_game_tree_macro_sicilian_variations() {
+    let actual = parse_pgn(r#"
+        1. e4 c5 {Sicilian Defense}
+        2. Nf3 d6 (2... Nc6 {Accelerated Dragon}) (2... e6 {French structure})
+        3. d4 *
+    "#);
+
+    let expected = game_tree! {
+        e4 {
+            c5 (comment: "Sicilian Defense") {
+                Nf3 {
+                    d6 { d4 },
+                    Nc6 (comment: "Accelerated Dragon"),
+                    e6 (comment: "French structure")
+                }
+            }
+        }
+    };
+
+    assert_contains_tree!(actual, expected);
 }

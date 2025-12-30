@@ -2,6 +2,75 @@
 //!
 //! Provides convenient macros for asserting tree structure in tests.
 
+// ============================================================================
+// GameNode comparison macros (for use with game_tree! macro)
+// ============================================================================
+
+/// Assert that actual GameTree contains the expected GameNode structure (subset matching)
+///
+/// This compares the root of the parsed GameTree against the expected GameNode tree.
+/// The actual tree may have additional children/properties not in the expected tree.
+///
+/// # Example
+/// ```ignore
+/// let actual = parse_pgn("1. e4! e5 2. Nf3 *");
+/// let expected = game_tree! { e4 (nag: GOOD_MOVE) { e5 { Nf3 } } };
+/// assert_contains_tree!(actual, expected);
+/// ```
+#[macro_export]
+macro_rules! assert_contains_tree {
+    ($actual:expr, $expected:expr) => {{
+        let actual = &$actual;
+        let expected = &$expected;
+        let result = $crate::dsl::node_contains(&actual.root, expected);
+        if result.is_mismatch() {
+            panic!("{}", result.format_node_error(&actual.root, expected));
+        }
+    }};
+    ($actual:expr, $expected:expr, $($arg:tt)+) => {{
+        let actual = &$actual;
+        let expected = &$expected;
+        let result = $crate::dsl::node_contains(&actual.root, expected);
+        if result.is_mismatch() {
+            panic!("{}\n\nContext: {}", result.format_node_error(&actual.root, expected), format_args!($($arg)+));
+        }
+    }};
+}
+
+/// Assert that two GameNode trees match exactly
+///
+/// Both trees must have identical structure, properties, and children order.
+///
+/// # Example
+/// ```ignore
+/// let tree1 = game_tree! { e4 { e5 } };
+/// let tree2 = game_tree! { e4 { e5 } };
+/// assert_nodes_match!(tree1, tree2);
+/// ```
+#[macro_export]
+macro_rules! assert_nodes_match {
+    ($actual:expr, $expected:expr) => {{
+        let actual = &$actual;
+        let expected = &$expected;
+        let result = $crate::dsl::nodes_match(actual, expected);
+        if result.is_mismatch() {
+            panic!("{}", result.format_node_error(actual, expected));
+        }
+    }};
+    ($actual:expr, $expected:expr, $($arg:tt)+) => {{
+        let actual = &$actual;
+        let expected = &$expected;
+        let result = $crate::dsl::nodes_match(actual, expected);
+        if result.is_mismatch() {
+            panic!("{}\n\nContext: {}", result.format_node_error(actual, expected), format_args!($($arg)+));
+        }
+    }};
+}
+
+// ============================================================================
+// TreeExpectation-based macros (original API)
+// ============================================================================
+
 /// Assert that a tree contains the expected structure (subset matching)
 ///
 /// # Example
