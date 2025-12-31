@@ -1,7 +1,8 @@
 //! `pgnq convert` command - convert between PGN formats
 
 use crate::cli::{CliOutputFormat, InputSource};
-use crate::parser::parse;
+use crate::error::ParseMode;
+use crate::parser::parse_with_options;
 use crate::serializer::{to_pgn, OutputOptions};
 use anyhow::Result;
 use clap::Args;
@@ -56,9 +57,13 @@ pub struct ConvertArgs {
     pub game: Option<usize>,
 }
 
-pub fn run(args: ConvertArgs, _quiet: bool) -> Result<()> {
+pub fn run(args: ConvertArgs, _quiet: bool, mode: ParseMode) -> Result<()> {
     let content = args.input.read_to_string()?;
-    let tree = parse(&content)?;
+    let file_path = match &args.input {
+        InputSource::File(p) => Some(p.clone()),
+        InputSource::Stdin => None,
+    };
+    let tree = parse_with_options(&content, mode, file_path)?;
 
     let options = OutputOptions {
         format: args.format.into(),

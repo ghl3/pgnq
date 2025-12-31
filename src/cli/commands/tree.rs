@@ -1,7 +1,8 @@
 //! `pgnq tree` command - display the game tree visually
 
 use crate::cli::InputSource;
-use crate::parser::parse;
+use crate::error::ParseMode;
+use crate::parser::parse_with_options;
 use crate::serializer::{to_tree_view, OutputFormat, OutputOptions};
 use crate::tree::{GameNode, NodePath};
 use anyhow::Result;
@@ -50,9 +51,13 @@ pub struct TreeArgs {
     pub game: Option<usize>,
 }
 
-pub fn run(args: TreeArgs, _quiet: bool) -> Result<()> {
+pub fn run(args: TreeArgs, _quiet: bool, mode: ParseMode) -> Result<()> {
     let content = args.input.read_to_string()?;
-    let tree = parse(&content)?;
+    let file_path = match &args.input {
+        InputSource::File(p) => Some(p.clone()),
+        InputSource::Stdin => None,
+    };
+    let tree = parse_with_options(&content, mode, file_path)?;
 
     // Determine the root node to display
     let display_root = if let Some(path_str) = &args.from_path {

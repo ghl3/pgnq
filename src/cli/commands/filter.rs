@@ -1,8 +1,9 @@
 //! `pgnq filter` command - filter nodes matching criteria
 
 use crate::cli::{CliOutputFormat, InputSource};
+use crate::error::ParseMode;
 use crate::nag::Nag;
-use crate::parser::parse;
+use crate::parser::parse_with_options;
 use crate::serializer::{to_pgn, OutputOptions};
 use crate::tree::{GameNode, GameTree, NodePath};
 use anyhow::Result;
@@ -58,9 +59,13 @@ pub struct FilterArgs {
     pub game: Option<usize>,
 }
 
-pub fn run(args: FilterArgs, _quiet: bool) -> Result<()> {
+pub fn run(args: FilterArgs, _quiet: bool, mode: ParseMode) -> Result<()> {
     let content = args.input.read_to_string()?;
-    let tree = parse(&content)?;
+    let file_path = match &args.input {
+        InputSource::File(p) => Some(p.clone()),
+        InputSource::Stdin => None,
+    };
+    let tree = parse_with_options(&content, mode, file_path)?;
 
     // Build the output string based on filter mode
     let output_string = if args.main_line {

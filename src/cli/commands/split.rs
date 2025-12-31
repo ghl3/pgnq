@@ -1,7 +1,8 @@
 //! `pgnq split` command - split a PGN file at multiple node paths
 
 use crate::cli::{CliOutputFormat, InputSource};
-use crate::parser::parse;
+use crate::error::ParseMode;
+use crate::parser::parse_with_options;
 use crate::serializer::{to_pgn, OutputOptions};
 use crate::tree::{GameTree, NodePath};
 use anyhow::Result;
@@ -40,9 +41,13 @@ pub struct SplitArgs {
     pub game: Option<usize>,
 }
 
-pub fn run(args: SplitArgs, quiet: bool) -> Result<()> {
+pub fn run(args: SplitArgs, quiet: bool, mode: ParseMode) -> Result<()> {
     let content = args.input.read_to_string()?;
-    let tree = parse(&content)?;
+    let file_path = match &args.input {
+        InputSource::File(p) => Some(p.clone()),
+        InputSource::Stdin => None,
+    };
+    let tree = parse_with_options(&content, mode, file_path)?;
 
     if args.splits.is_empty() {
         anyhow::bail!("No split specifications provided. Use -s 'path:name'");

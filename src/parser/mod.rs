@@ -4,21 +4,40 @@ mod builder;
 mod lexer;
 mod token;
 
-pub use builder::build_tree;
-pub use lexer::tokenize;
+pub use builder::{build_tree, build_tree_with_options};
+pub use lexer::{tokenize, tokenize_simple, LocatedToken};
 pub use token::Token;
 
-use crate::error::Result;
+use crate::error::{ParseMode, Result};
 use crate::tree::GameTree;
+use std::path::PathBuf;
 
 /// Parse a PGN string into a GameTree
 pub fn parse(input: &str) -> Result<GameTree> {
+    parse_with_options(input, ParseMode::Lenient, None)
+}
+
+/// Parse a PGN string with specific options
+pub fn parse_with_options(
+    input: &str,
+    mode: ParseMode,
+    file: Option<PathBuf>,
+) -> Result<GameTree> {
     let tokens = tokenize(input);
-    build_tree(&tokens)
+    build_tree_with_options(&tokens, mode, file, Some(input))
 }
 
 /// Parse multiple games from a PGN string
 pub fn parse_all(input: &str) -> Result<Vec<GameTree>> {
+    parse_all_with_options(input, ParseMode::Lenient, None)
+}
+
+/// Parse multiple games with specific options
+pub fn parse_all_with_options(
+    input: &str,
+    mode: ParseMode,
+    file: Option<PathBuf>,
+) -> Result<Vec<GameTree>> {
     // Split on headers that appear after moves (indicating a new game)
     let mut games = Vec::new();
     let mut current_start = 0;
@@ -36,7 +55,7 @@ pub fn parse_all(input: &str) -> Result<Vec<GameTree>> {
             // New game starting - we've seen moves and now see a new header
             let game_text = &input[current_start..current_pos];
             if !game_text.trim().is_empty() {
-                games.push(parse(game_text)?);
+                games.push(parse_with_options(game_text, mode, file.clone())?);
             }
             current_start = current_pos;
             seen_moves = false;
@@ -59,7 +78,7 @@ pub fn parse_all(input: &str) -> Result<Vec<GameTree>> {
     // Parse the last game
     let remaining = &input[current_start..];
     if !remaining.trim().is_empty() {
-        games.push(parse(remaining)?);
+        games.push(parse_with_options(remaining, mode, file)?);
     }
 
     if games.is_empty() {
@@ -68,6 +87,11 @@ pub fn parse_all(input: &str) -> Result<Vec<GameTree>> {
     }
 
     Ok(games)
+}
+
+/// Alias for parse_all (backward compatibility)
+pub fn parse_games(input: &str) -> Result<Vec<GameTree>> {
+    parse_all(input)
 }
 
 #[cfg(test)]
@@ -500,5 +524,28 @@ Prose about Nf3.
         assert_eq!(games[0].count_nodes(), 2);
         // Game 2: d4, Nf3 = 2 (Nf3 is real move after move number)
         assert_eq!(games[1].count_nodes(), 2);
+    }
+
+    // ========================================================================
+    // Error Reporting Tests
+    // ========================================================================
+
+    #[test]
+    fn test_unclosed_variation_error_with_context() {
+        let pgn = "1. e4 (1... c5\n2. Nf3 *";
+        let result = parse_with_options(pgn, ParseMode::Lenient, Some("test.pgn".into()));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let err_str = err.to_string();
+        assert!(err_str.contains("E002"), "Should have error code E002");
+        assert!(err_str.contains("unclosed variation"), "Should mention unclosed variation");
+    }
+
+    #[test]
+    fn test_parse_mode_default_is_lenient() {
+        // Verify parse() uses lenient mode by default
+        let pgn = "1. e4 e5 2. Nf3 *";
+        let result = parse(pgn);
+        assert!(result.is_ok());
     }
 }

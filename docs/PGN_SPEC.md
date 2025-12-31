@@ -1,242 +1,240 @@
-# PGN Format Support in pgnq
+# PGN Format Specification for pgnq
 
-This document describes the PGN (Portable Game Notation) format variants that pgnq can parse. PGN is the standard text format for recording chess games.
-
----
-
-## Supported Format Types
-
-pgnq supports several PGN format variants. These are conceptual groupings based on how the PGN is structured.
-
-### 1. Standard PGN Format
-
-The classic format used by most chess software. Comments are wrapped in `{braces}`, variations use `(parentheses)`.
-
-```pgn
-[Event "World Championship"]
-[White "Carlsen"]
-[Black "Caruana"]
-[Result "1/2-1/2"]
-
-1. e4 {The King's Pawn opening} e5 2. Nf3 Nc6 3. Bb5 {The Ruy Lopez} a6
-(3... Nf6 {Berlin Defense}) 4. Ba4 Nf6 5. O-O 1/2-1/2
-```
-
-**Characteristics:**
-- Comments in `{braces}` or after `;` (semicolon to end of line)
-- Variations in `(parentheses)`
-- Moves, comments, and variations can be on the same line
-- Common in exports from: Chess.com, Lichess games, ChessBase, SCID
-
-**Status:** Fully supported
+This document describes what PGN (Portable Game Notation) patterns pgnq can parse, which require heuristics, and which will produce errors.
 
 ---
 
-### 2. Line-Based Format with Inline Comments
+## 1. Overview
 
-A variation where each move appears on its own line, with comments interspersed between moves.
+pgnq parses PGN files with flexible format support:
 
-```pgn
-1. d4 Nf6 2. c4 g6 3. Nc3 Bg7 4. e4 d6 5. Nf3 O-O 6. Be2
-Welcome to the main line!
-Na6
-This knight move might look strange at first, but it has a clear purpose.
-7. O-O
-We continue with castling.
-e5 *
-```
-
-**Characteristics:**
-- Moves appear on their own lines (or at the start of lines)
-- Comments appear on subsequent lines as plain text (no braces needed)
-- Each line is either a "move line" or a "comment line"
-- Variations still use `(parentheses)`
-
-**Status:** Supported with line-based parsing rules (see below)
+- Files can mix `{brace comments}` and bare text comments
+- Standard PGN and line-based formats can coexist in the same file
+- **Default: Lenient mode** - applies heuristics for ambiguous patterns
+- **Option: Strict mode** (`--strict`) - errors on any ambiguity
 
 ---
 
-### 3. Line-Based Format with Variations
+## 2. Three Pattern Categories
 
-Combines the line-based structure with nested variations.
+### Category 1: Unambiguous (Works in Both Modes)
+Clear patterns that parse identically in strict and lenient modes.
 
-```pgn
-1. d4 Nf6 2. c4 g6 3. Nc3 Bg7 4. e4 d6 5. Nf3 O-O 6. Be2 Na6 7. O-O
-(7. Nd2
-This move prevents the typical knight jump to c5.
-c5
-Black switches to a Benoni-style setup for two reasons: 1) the knight goes to c7
-2) White's knight is stuck on d2.
-8. d5
-)
-e5 *
-```
+### Category 2: Ambiguous (Requires Heuristics)
+Patterns that could be interpreted multiple ways.
+- **Lenient mode**: Applies heuristics to resolve
+- **Strict mode**: Returns error with helpful message
 
-**Characteristics:**
-- Combines line-based structure with variations
-- `(` at the start of a line begins a variation
-- `)` on its own line (or after moves) ends a variation
-- Comment lines can contain list markers like `1)` or `2)` without breaking the variation
-
-**Status:** Supported with line-based parsing rules
+### Category 3: Unparsable (Always Errors)
+Fundamentally broken patterns that cannot be parsed.
+Both modes return an error with context and suggestions.
 
 ---
 
-### 4. Compact Single-Line Format
+## 3. Unambiguous Patterns (Category 1)
 
-Everything on one or few lines, common in database exports.
+These patterns are clear and work in both modes:
 
-```pgn
-1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3 O-O 1-0
-```
+### Standard PGN Elements
+| Pattern | Meaning |
+|---------|---------|
+| `{brace comments}` | Always a comment |
+| `(variations with moves)` | Always a variation |
+| `1. e4` | Move number + move, always structural |
+| `; text` | Semicolon to end of line is a comment |
+| `!`, `?`, `$14` | NAGs after moves are annotations |
+| `1-0`, `0-1`, `1/2-1/2`, `*` | Game result |
 
-**Characteristics:**
-- Minimal formatting, no comments
-- All moves on a single line or few lines
-- Common in large database exports
-
-**Status:** Fully supported
-
----
-
-### 5. Annotated Format with NAGs
-
-Games with move quality annotations.
-
-```pgn
-1. e4! {Excellent opening move} e5 2. Nf3 Nc6 3. Bc4?! {The Italian - playable but not the best}
-Nf6! 4. Ng5?? {A well-known blunder} d5! 5. exd5 Na5 $17 {Black is much better} *
-```
-
-**Characteristics:**
-- NAGs (Numeric Annotation Glyphs) like `$17` or symbols like `!`, `?`, `!!`, `??`
-- Common symbol meanings:
-  - `!` = good move
-  - `?` = poor move
-  - `!!` = brilliant
-  - `??` = blunder
-  - `!?` = interesting
-  - `?!` = dubious
-
-**Status:** Fully supported (symbols converted to NAGs internally)
-
----
-
-## Parsing Rules for Line-Based Formats
-
-When parsing line-based PGN (formats 2 and 3 above), pgnq uses these rules:
-
-### Line Classification
-
-Each line is classified by its first token:
-
-| First token on line | Classification |
+### Line-Based Bare Text
+| First Token on Line | Classification |
 |---------------------|----------------|
-| `(` | Start of variation |
-| `)` | End of variation |
-| Move number (like `7.` or `12...`) | Move line |
-| Move (like `Nf3`, `e5`, `O-O`) | Move line |
-| Regular text (like `This`, `The`, `Black`) | Comment line |
+| `(` | Variation start |
+| `)` | Variation end |
+| Move number (e.g., `7.`) | Move line |
+| Move (e.g., `Nf3`, `e5`) | Move line |
+| Text word (e.g., `This`, `The`) | Comment line (entire line) |
 
-### Comment Lines
+### Mixed Format Example
+This works in strict mode because each element is unambiguous:
 
-When a line starts with regular text (not a move), everything on that line is treated as comment:
-- Move-like words are NOT interpreted as moves
-- List markers like `1)` or `2)` are NOT interpreted as variation endings
-- Parentheses are NOT interpreted structurally
-
-This allows natural prose to include chess notation without confusion:
-
+```pgn
+1. e4 {Standard comment} e5
+This is a bare text comment on its own line.
+2. Nf3 Nc6
+(2... d6 {Philidor inside variation})
+3. Bb5 *
 ```
-This makes sense for two reasons: 1) the knight goes to c7 2) White is stuck.
-After the exchange on e5, Black gets active play.
-The move ...Nf6 is the main alternative.
-```
-
-### Move Lines
-
-When a line starts with a move or move number:
-- Process moves structurally
-- If followed by text, switch to comment mode until end of line
-- A `)` at the end of a move line closes the current variation
 
 ---
 
-## Patterns That Parse Correctly
+## 4. Ambiguous Patterns (Category 2)
 
-### List markers in comments
-```
-This is good for two reasons: 1) first reason 2) second reason.
-```
-The `1)` and `2)` are part of the comment, not variation endings.
+These require heuristics (lenient mode) or error (strict mode):
 
-### Move references in comments
-```
-After the typical ...e7-e5 advance, Black gets counterplay.
-The plan involving 7.d5 is thematic.
-```
-Move-like text in comments is preserved as text.
+### Move-Like Token at Line Start
 
-### Variations ending after moves
-```
-8. d5 Nc7 9. O-O a6)
-```
-The `)` closes the variation even though it's on a line with moves.
-
-### Nested variations
-```
-(7. Nd2 c5
-(8. dxc5 Nxc5)
-8. d5)
-```
-Inner and outer variations are correctly tracked.
-
----
-
-## Patterns That May Not Parse Correctly
-
-### Ambiguous: Move at start of comment
 ```
 c7 is a great square for the knight.
 ```
-`c7` looks like a pawn move. Currently parsed as a move, not comment.
 
-**Workaround:** Rephrase to start with non-move text: `The c7 square is great for the knight.`
+- **Could be**: pawn move `c7` OR start of comment
+- **Lenient**: If followed by non-move text, treat whole line as comment
+- **Strict**: Error
 
-### Ambiguous: Single move on its own line
-```
-Interesting position.
-a3
-More commentary.
-```
-Is `a3` a move or a label? Currently parsed as a move.
+### Parenthetical Move References in Prose
 
-### Unsupported: Unbalanced parentheses in comments
 ```
-This is a comment (with an unclosed paren
-8. d5
+The Petrosian Variation (7.d5) leads to complex play.
 ```
-May incorrectly start a variation.
 
-**Workaround:** Ensure parentheses in comments are balanced, or use brace comments.
+- **Could be**: variation OR textual reference to a move
+- **Lenient**: Collapse to comment if 1-2 moves surrounded by text
+- **Strict**: Error
+
+### List Markers That Look Like Variation Ends
+
+```
+Black has two plans: 1) push e5 2) play c5.
+```
+
+- **Could be**: `1)` closing a variation OR list marker in prose
+- **Lenient**: Treat as comment text when in prose context
+- **Strict**: Error
 
 ---
 
-## Format Detection
+## 5. Unparsable Patterns (Category 3)
 
-pgnq attempts to detect the format automatically:
+These always error in both modes:
 
-| Indicator | Inferred Format |
-|-----------|-----------------|
-| All comments in `{braces}` | Standard PGN |
-| Text on lines between moves | Line-based format |
-| No comments at all | Compact format |
+### Unbalanced Parentheses
 
-You can also specify the format explicitly if auto-detection fails.
+```
+1. e4 (1... c5 2. Nf3
+3. d4 *
+```
+
+Variation opened but never closed.
+
+### Unclosed Brace Comment
+
+```
+1. e4 {This comment never closes
+e5 2. Nf3 *
+```
+
+Brace opened but no matching `}`.
+
+### Invalid Move Notation
+
+```
+1. e4 Xyz9 2. Nf3 *
+```
+
+`Xyz9` is not valid SAN (Standard Algebraic Notation).
+
+### Unexpected Closing Parenthesis
+
+```
+1. e4 ) e5
+```
+
+Closing paren without an opening paren.
 
 ---
 
-## References
+## 6. Parsing Rules
+
+### Rule 1: Line Classification
+
+The first token after a newline determines how the line is parsed:
+
+| First Token | Line Type | Behavior |
+|-------------|-----------|----------|
+| `(` | Variation start | Opens new variation |
+| `)` | Variation end | Closes current variation |
+| Move number | Move line | Parse moves structurally |
+| Move | Move line | Parse moves structurally |
+| Text word | Comment line | ALL tokens until newline are comment |
+
+### Rule 2: Comment Lines Are Complete
+
+Once a line is classified as a comment, everything on that line is comment text. Move-like words, list markers, and parentheses are NOT interpreted structurally.
+
+### Rule 3: Brace Comments Override Context
+
+`{...}` is always a comment, anywhere it appears.
+
+### Rule 4: Variations End at `)` or End of Move Line
+
+- `)` at line start closes the variation
+- `)` at end of a move line closes the variation
+
+---
+
+## 7. Error Messages
+
+pgnq produces rich, informative error messages modeled on the Rust compiler style.
+
+### Error Message Format
+
+```
+error[E002]: unclosed variation
+  --> game.pgn:1:8
+   |
+ 1 |   1. e4 (1... c5 2. Nf3
+   |         ^---- variation starts here
+ 2 |   3. d4 *
+   |         ^ expected ')' before end of game
+   |
+   = note: Variation was opened at line 1, column 8
+   = help: Add ')' to close the variation, or remove the opening '('
+```
+
+### What's Included
+
+| Component | Description |
+|-----------|-------------|
+| Error code | `E001`, `E002`, etc. for programmatic handling |
+| File path | Which file contains the error |
+| Line:column | Exact position of the problem |
+| Source context | Surrounding lines with visual highlighting |
+| Plain English | What went wrong |
+| Suggestions | How to fix it |
+
+### Color Scheme
+
+- **Red**: The problematic token/pattern
+- **Cyan**: Line numbers and file path
+- **Yellow**: Secondary markers
+- **Bold white**: Error title
+
+### Error Codes
+
+| Code | Error Type |
+|------|------------|
+| E001 | Unclosed brace comment |
+| E002 | Unclosed variation (unbalanced parentheses) |
+| E003 | Unexpected closing parenthesis |
+| E004 | Unexpected token |
+| E005 | Invalid move notation |
+| E010 | Ambiguous: move-like token at line start (strict mode) |
+| E011 | Ambiguous: parenthetical move reference (strict mode) |
+| E012 | Ambiguous: list marker could be variation end (strict mode) |
+
+---
+
+## 8. Lenient Mode Heuristics
+
+| Pattern | Heuristic Applied |
+|---------|-------------------|
+| Move-like at line start + text | Treat whole line as comment |
+| `(move)` surrounded by text | Collapse to comment |
+| List markers `1)` `2)` | Treat as text in comment context |
+
+---
+
+## 9. References
 
 - [Official PGN Specification](http://www.saremba.de/chessgml/standards/pgn/pgn-complete.htm) - The original 1994 standard
 - [Chess.com PGN Guide](https://www.chess.com/terms/chess-pgn)

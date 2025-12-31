@@ -1,7 +1,8 @@
 //! `pgnq extract` command - extract a subtree at a specific path
 
 use crate::cli::{CliOutputFormat, InputSource};
-use crate::parser::parse;
+use crate::error::ParseMode;
+use crate::parser::parse_with_options;
 use crate::serializer::{to_pgn, OutputOptions};
 use crate::tree::{GameNode, GameTree, NodePath, PathSegment};
 use anyhow::Result;
@@ -41,9 +42,13 @@ pub struct ExtractArgs {
     pub game: Option<usize>,
 }
 
-pub fn run(args: ExtractArgs, _quiet: bool) -> Result<()> {
+pub fn run(args: ExtractArgs, _quiet: bool, mode: ParseMode) -> Result<()> {
     let content = args.input.read_to_string()?;
-    let tree = parse(&content)?;
+    let file_path = match &args.input {
+        InputSource::File(p) => Some(p.clone()),
+        InputSource::Stdin => None,
+    };
+    let tree = parse_with_options(&content, mode, file_path)?;
 
     let path = NodePath::parse(&args.path)?;
     let node = path

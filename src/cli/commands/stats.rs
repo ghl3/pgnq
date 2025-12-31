@@ -1,7 +1,8 @@
 //! `pgnq stats` command - show detailed statistics
 
 use crate::cli::InputSource;
-use crate::parser::parse;
+use crate::error::ParseMode;
+use crate::parser::parse_with_options;
 use anyhow::Result;
 use clap::Args;
 use std::collections::HashMap;
@@ -36,9 +37,13 @@ pub struct StatsArgs {
     pub game: Option<usize>,
 }
 
-pub fn run(args: StatsArgs, _quiet: bool) -> Result<()> {
+pub fn run(args: StatsArgs, _quiet: bool, mode: ParseMode) -> Result<()> {
     let content = args.input.read_to_string()?;
-    let tree = parse(&content)?;
+    let file_path = match &args.input {
+        InputSource::File(p) => Some(p.clone()),
+        InputSource::Stdin => None,
+    };
+    let tree = parse_with_options(&content, mode, file_path)?;
 
     // Collect NAG counts
     let mut nag_counts: HashMap<String, usize> = HashMap::new();

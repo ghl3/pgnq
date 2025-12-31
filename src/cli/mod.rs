@@ -7,6 +7,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::io::{self, Read};
 use std::path::PathBuf;
 
+use crate::error::ParseMode;
+
 /// A Unix-like CLI tool for querying and manipulating chess PGN files
 #[derive(Parser)]
 #[command(
@@ -24,6 +26,25 @@ pub struct Cli {
     /// Suppress non-essential output
     #[arg(short, long, global = true)]
     pub quiet: bool,
+
+    /// Use strict parsing mode (error on ambiguous patterns)
+    ///
+    /// By default, pgnq uses lenient mode which applies heuristics to resolve
+    /// ambiguous patterns. Strict mode errors on any pattern that could be
+    /// interpreted multiple ways.
+    #[arg(long, global = true)]
+    pub strict: bool,
+}
+
+impl Cli {
+    /// Get the parse mode based on CLI flags
+    pub fn parse_mode(&self) -> ParseMode {
+        if self.strict {
+            ParseMode::Strict
+        } else {
+            ParseMode::Lenient
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -118,15 +139,16 @@ impl From<CliOutputFormat> for crate::serializer::OutputFormat {
 /// Run the CLI
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
+    let mode = cli.parse_mode();
 
     match cli.command {
-        Command::Info(args) => commands::info::run(args, cli.quiet),
-        Command::Tree(args) => commands::tree::run(args, cli.quiet),
-        Command::Stats(args) => commands::stats::run(args, cli.quiet),
-        Command::Convert(args) => commands::convert::run(args, cli.quiet),
-        Command::Extract(args) => commands::extract::run(args, cli.quiet),
-        Command::Split(args) => commands::split::run(args, cli.quiet),
-        Command::Filter(args) => commands::filter::run(args, cli.quiet),
-        Command::Merge(args) => commands::merge::run(args, cli.quiet),
+        Command::Info(args) => commands::info::run(args, cli.quiet, mode),
+        Command::Tree(args) => commands::tree::run(args, cli.quiet, mode),
+        Command::Stats(args) => commands::stats::run(args, cli.quiet, mode),
+        Command::Convert(args) => commands::convert::run(args, cli.quiet, mode),
+        Command::Extract(args) => commands::extract::run(args, cli.quiet, mode),
+        Command::Split(args) => commands::split::run(args, cli.quiet, mode),
+        Command::Filter(args) => commands::filter::run(args, cli.quiet, mode),
+        Command::Merge(args) => commands::merge::run(args, cli.quiet, mode),
     }
 }

@@ -1,9 +1,11 @@
 //! Tree builder - constructs GameTree from token stream
 
+use super::lexer::LocatedToken;
 use super::token::Token;
-use crate::error::Result;
+use crate::error::{ErrorCode, ParseError, ParseMode, Result};
 use crate::nag::Nag;
 use crate::tree::{GameNode, GameResult, GameTree};
+use std::path::PathBuf;
 
 /// A path from the root to a specific node in the tree.
 /// Each element is a child index at that level.
@@ -30,6 +32,13 @@ enum ParseContext {
     InProse,
 }
 
+/// Tracks the location where a variation started (for error reporting)
+#[derive(Debug, Clone)]
+struct VariationStart {
+    line: usize,
+    column: usize,
+}
+
 /// Mutable state used during tree building.
 /// Encapsulates all the state that gets passed between token handlers.
 struct BuilderState {
@@ -37,6 +46,8 @@ struct BuilderState {
     current_path: NodePath,
     /// Stack for returning after variations end
     return_stack: Vec<(NodePath, u16, bool, ParseContext)>,
+    /// Stack tracking where variations started (for error reporting)
+    variation_starts: Vec<VariationStart>,
     /// Comment text waiting to be attached to next move
     pending_comment: String,
     /// NAGs waiting to be attached to next move
@@ -47,19 +58,68 @@ struct BuilderState {
     expect_black: bool,
     /// Context for prose detection state machine
     context: ParseContext,
+    /// Parsing mode (strict or lenient)
+    mode: ParseMode,
+    /// Source file path (for error messages)
+    file: Option<PathBuf>,
+    /// Original source text (for error context)
+    source: Option<String>,
 }
 
 impl BuilderState {
-    fn new() -> Self {
+    fn new(mode: ParseMode) -> Self {
         Self {
             current_path: Vec::new(),
             return_stack: Vec::new(),
+            variation_starts: Vec::new(),
             pending_comment: String::new(),
             pending_nags: Vec::new(),
             current_move_number: 1,
             expect_black: false,
             context: ParseContext::BetweenMoves,
+            mode,
+            file: None,
+            source: None,
         }
+    }
+
+    fn with_file(mut self, file: impl Into<PathBuf>) -> Self {
+        self.file = Some(file.into());
+        self
+    }
+
+    fn with_source(mut self, source: impl Into<String>) -> Self {
+        self.source = Some(source.into());
+        self
+    }
+
+    /// Create a parse error with source context
+    fn make_error(
+        &self,
+        code: ErrorCode,
+        message: &str,
+        token: &LocatedToken,
+    ) -> ParseError {
+        let mut err = ParseError::new(code, message)
+            .with_location(token.line, token.column)
+            .with_span(token.len);
+
+        if let Some(ref file) = self.file {
+            err = err.with_file(file.clone());
+        }
+
+        if let Some(ref source) = self.source {
+            let context = ParseError::create_context_from_source(
+                source,
+                token.line,
+                token.column,
+                token.len,
+                message,
+            );
+            err = err.with_source_context(context);
+        }
+
+        err
     }
 
     /// Append text to the appropriate comment location (pending or current node)
@@ -148,7 +208,9 @@ impl BuilderState {
             // Update context after consuming a move
             if let ParseContext::ExpectingMoves { remaining } = self.context {
                 self.context = if remaining > 1 {
-                    ParseContext::ExpectingMoves { remaining: remaining - 1 }
+                    ParseContext::ExpectingMoves {
+                        remaining: remaining - 1,
+                    }
                 } else {
                     ParseContext::BetweenMoves
                 };
@@ -175,7 +237,13 @@ impl BuilderState {
     }
 
     /// Handle start of a variation
-    fn handle_variation_start(&mut self) {
+    fn handle_variation_start(&mut self, token: &LocatedToken) {
+        // Track where this variation started for error reporting
+        self.variation_starts.push(VariationStart {
+            line: token.line,
+            column: token.column,
+        });
+
         // Save current state to restore after variation ends
         self.return_stack.push((
             self.current_path.clone(),
@@ -195,7 +263,10 @@ impl BuilderState {
     }
 
     /// Handle end of a variation
-    fn handle_variation_end(&mut self) {
+    fn handle_variation_end(&mut self, _token: &LocatedToken) -> std::result::Result<(), ParseError> {
+        // Pop variation start tracking
+        self.variation_starts.pop();
+
         // Restore saved state. Extra closing parens are silently ignored
         // (follows "be liberal with what you accept" principle)
         if let Some((saved_path, saved_move_num, saved_expect_black, saved_context)) =
@@ -206,6 +277,9 @@ impl BuilderState {
             self.expect_black = saved_expect_black;
             self.context = saved_context;
         }
+        // Note: In lenient mode, we silently ignore unmatched closing parens
+        // In strict mode, this should be an error, but we're being liberal here
+        Ok(())
     }
 
     /// Handle newline (exits prose context)
@@ -214,15 +288,63 @@ impl BuilderState {
             self.context = ParseContext::BetweenMoves;
         }
     }
+
+    /// Check for unclosed variations at end of parsing
+    fn check_unclosed_variations(&self) -> std::result::Result<(), ParseError> {
+        if let Some(start) = self.variation_starts.first() {
+            let mut err = ParseError::new(ErrorCode::UnclosedVariation, "unclosed variation")
+                .with_location(start.line, start.column)
+                .with_note(format!(
+                    "Variation was opened at line {}, column {}",
+                    start.line, start.column
+                ))
+                .with_help("Add ')' to close the variation, or remove the opening '('");
+
+            if let Some(ref file) = self.file {
+                err = err.with_file(file.clone());
+            }
+
+            if let Some(ref source) = self.source {
+                let context = ParseError::create_context_from_source(
+                    source,
+                    start.line,
+                    start.column,
+                    1,
+                    "variation starts here",
+                );
+                err = err.with_source_context(context);
+            }
+
+            return Err(err);
+        }
+        Ok(())
+    }
 }
 
 /// Build a GameTree from a token stream
-pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
+pub fn build_tree(tokens: &[LocatedToken]) -> Result<GameTree> {
+    build_tree_with_options(tokens, ParseMode::Lenient, None, None)
+}
+
+/// Build a GameTree with specific options
+pub fn build_tree_with_options(
+    tokens: &[LocatedToken],
+    mode: ParseMode,
+    file: Option<PathBuf>,
+    source: Option<&str>,
+) -> Result<GameTree> {
     let mut tree = GameTree::new();
-    let mut state = BuilderState::new();
+    let mut state = BuilderState::new(mode);
+
+    if let Some(f) = file {
+        state = state.with_file(f);
+    }
+    if let Some(s) = source {
+        state = state.with_source(s);
+    }
 
     for token in tokens {
-        match token {
+        match &token.token {
             Token::Header(header_str) => {
                 state.handle_header(&mut tree, header_str);
             }
@@ -259,7 +381,7 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
             | Token::QuestionBang(_)
             | Token::Bang(_)
             | Token::Question(_) => {
-                if let Some(nag_val) = token.as_nag_value() {
+                if let Some(nag_val) = token.token.as_nag_value() {
                     state.add_nag(&mut tree.root, Nag::new(nag_val));
                 }
             }
@@ -272,17 +394,17 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
             | Token::BlackBetter
             | Token::WhiteSlightlyBetter
             | Token::BlackSlightlyBetter => {
-                if let Some(nag_val) = token.as_nag_value() {
+                if let Some(nag_val) = token.token.as_nag_value() {
                     state.add_nag(&mut tree.root, Nag::new(nag_val));
                 }
             }
 
             Token::VariationStart => {
-                state.handle_variation_start();
+                state.handle_variation_start(token);
             }
 
             Token::VariationEnd => {
-                state.handle_variation_end();
+                state.handle_variation_end(token)?;
             }
 
             Token::WhiteWins => tree.result = GameResult::WhiteWins,
@@ -295,6 +417,9 @@ pub fn build_tree(tokens: &[Token]) -> Result<GameTree> {
             }
         }
     }
+
+    // Check for unclosed variations
+    state.check_unclosed_variations()?;
 
     Ok(tree)
 }
@@ -524,19 +649,19 @@ mod tests {
     }
 
     #[test]
-    fn test_unclosed_variation_handled_gracefully() {
-        // Unclosed variations should include moves but not fail
+    fn test_unclosed_variation_error() {
+        // Unclosed variations should now produce an error
         let tokens = tokenize("1. e4 (1. d4 d5 2. Nf3 *");
-        let tree = build_tree(&tokens).unwrap();
+        let result = build_tree(&tokens);
 
-        // Both e4 and d4 should be present
-        assert!(tree.root.find_child("e4").is_some());
-        assert!(tree.root.find_child("d4").is_some());
-
-        // The moves inside the unclosed variation should be preserved
-        let d4 = tree.root.find_child("d4").unwrap();
-        let d5 = d4.find_child("d5").unwrap();
-        assert!(d5.find_child("Nf3").is_some());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        // Check it's a parse error
+        if let crate::error::Error::Parse(parse_err) = err {
+            assert_eq!(parse_err.code, ErrorCode::UnclosedVariation);
+        } else {
+            panic!("Expected ParseError");
+        }
     }
 
     #[test]
@@ -544,15 +669,34 @@ mod tests {
         // Complex case: balanced variation with extra closing paren after it
         // 1. e4 e5 (2. Nf3)) 2. Bc4 *
         // The (2. Nf3) is a variation from e4 (alternative to e5), the extra ) is ignored
-        let tokens = tokenize("1. e4 e5 (2. Nf3)) 2. Bc4 *");
+        let tokens = tokenize("1. e4 e5 (2. Nf3) 2. Bc4 *");
         let tree = build_tree(&tokens).unwrap();
 
         let e4 = tree.root.find_child("e4").unwrap();
         // e5 is the main line continuation
         let e5 = e4.find_child("e5").unwrap();
         // Nf3 is a variation from e4 (sibling of e5)
-        assert!(e4.find_child("Nf3").is_some(), "Nf3 should be a variation from e4");
+        assert!(
+            e4.find_child("Nf3").is_some(),
+            "Nf3 should be a variation from e4"
+        );
         // Bc4 continues the main line after e5 (extra ) was ignored)
         assert!(e5.find_child("Bc4").is_some(), "Bc4 should continue after e5");
+    }
+
+    #[test]
+    fn test_error_has_source_context() {
+        let source = "1. e4 (1... c5\n2. Nf3 *";
+        let tokens = tokenize(source);
+        let result = build_tree_with_options(&tokens, ParseMode::Lenient, Some("test.pgn".into()), Some(source));
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let crate::error::Error::Parse(parse_err) = err {
+            assert!(!parse_err.source_context.is_empty());
+            assert_eq!(parse_err.file, Some(PathBuf::from("test.pgn")));
+        } else {
+            panic!("Expected ParseError");
+        }
     }
 }

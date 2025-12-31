@@ -1,7 +1,8 @@
 //! `pgnq merge` command - merge multiple PGN files into unified tree
 
 use crate::cli::{CliOutputFormat, InputSource};
-use crate::parser::parse_all;
+use crate::error::ParseMode;
+use crate::parser::parse_all_with_options;
 use crate::serializer::{to_pgn, OutputOptions};
 use crate::tree::{GameNode, GameResult, GameTree};
 use anyhow::{bail, Result};
@@ -48,7 +49,7 @@ pub struct MergeOptions {
     pub concat_comments: bool,
 }
 
-pub fn run(args: MergeArgs, _quiet: bool) -> Result<()> {
+pub fn run(args: MergeArgs, _quiet: bool, mode: ParseMode) -> Result<()> {
     // Validate inputs
     let stdin_count = args.inputs.iter().filter(|i| matches!(i, InputSource::Stdin)).count();
     if stdin_count > 1 {
@@ -60,7 +61,11 @@ pub fn run(args: MergeArgs, _quiet: bool) -> Result<()> {
 
     for input in &args.inputs {
         let content = input.read_to_string()?;
-        let trees = parse_all(&content)?;
+        let file_path = match input {
+            InputSource::File(p) => Some(p.clone()),
+            InputSource::Stdin => None,
+        };
+        let trees = parse_all_with_options(&content, mode, file_path)?;
         all_trees.extend(trees);
     }
 
