@@ -263,12 +263,11 @@ impl BuilderState {
     }
 
     /// Handle end of a variation
-    fn handle_variation_end(&mut self, _token: &LocatedToken) -> std::result::Result<(), ParseError> {
+    fn handle_variation_end(&mut self, token: &LocatedToken) -> std::result::Result<(), ParseError> {
         // Pop variation start tracking
         self.variation_starts.pop();
 
-        // Restore saved state. Extra closing parens are silently ignored
-        // (follows "be liberal with what you accept" principle)
+        // Restore saved state
         if let Some((saved_path, saved_move_num, saved_expect_black, saved_context)) =
             self.return_stack.pop()
         {
@@ -276,10 +275,25 @@ impl BuilderState {
             self.current_move_number = saved_move_num;
             self.expect_black = saved_expect_black;
             self.context = saved_context;
+            Ok(())
+        } else {
+            // Unmatched closing paren
+            match self.mode {
+                ParseMode::Strict => {
+                    // In strict mode, error on unmatched closing parens
+                    Err(self.make_error(
+                        ErrorCode::UnexpectedClosingParen,
+                        "unexpected closing parenthesis",
+                        token,
+                    )
+                    .with_help("Remove the extra ')' or add a matching '(' earlier"))
+                }
+                ParseMode::Lenient => {
+                    // In lenient mode, silently ignore (be liberal with input)
+                    Ok(())
+                }
+            }
         }
-        // Note: In lenient mode, we silently ignore unmatched closing parens
-        // In strict mode, this should be an error, but we're being liberal here
-        Ok(())
     }
 
     /// Handle newline (exits prose context)

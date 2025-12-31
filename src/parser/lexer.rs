@@ -1,6 +1,7 @@
 //! Lexer for PGN files - converts input text to token stream
 
 use super::token::Token;
+use crate::error::ParseMode;
 use logos::Logos;
 
 /// A token with its location information
@@ -59,13 +60,25 @@ fn offset_to_line_col(source: &str, offset: usize) -> (usize, usize) {
     (line, col)
 }
 
-/// Tokenize a PGN string into a vector of located tokens
+/// Tokenize a PGN string into a vector of located tokens (lenient mode)
 ///
 /// This is a liberal tokenizer that handles multiple PGN formats:
 /// - Standard PGN with {} comments
 /// - Lichess format with bare text comments
 /// - Mixed formats
 pub fn tokenize(input: &str) -> Vec<LocatedToken> {
+    tokenize_with_mode(input, ParseMode::Lenient)
+}
+
+/// Tokenize a PGN string with a specific parse mode
+///
+/// In lenient mode, applies heuristics to handle ambiguous patterns:
+/// - Collapses embedded variations that are actually parenthetical references
+/// - Handles move-like tokens in prose context
+///
+/// In strict mode, skips heuristics and returns tokens as-is,
+/// allowing the builder to detect and error on ambiguous patterns.
+pub fn tokenize_with_mode(input: &str, mode: ParseMode) -> Vec<LocatedToken> {
     let mut tokens: Vec<LocatedToken> = Vec::new();
     let lexer = Token::lexer(input);
 
@@ -95,9 +108,10 @@ pub fn tokenize(input: &str) -> Vec<LocatedToken> {
         }
     }
 
-    // Post-process: convert bare text to comments if we detect it's actually a comment
-    // (lines that don't look like moves)
-    post_process_tokens(&mut tokens);
+    // Apply heuristics only in lenient mode
+    if mode == ParseMode::Lenient {
+        post_process_tokens(&mut tokens);
+    }
 
     tokens
 }

@@ -5,7 +5,7 @@ mod lexer;
 mod token;
 
 pub use builder::{build_tree, build_tree_with_options};
-pub use lexer::{tokenize, tokenize_simple, LocatedToken};
+pub use lexer::{tokenize, tokenize_simple, tokenize_with_mode, LocatedToken};
 pub use token::Token;
 
 use crate::error::{ParseMode, Result};
@@ -23,7 +23,7 @@ pub fn parse_with_options(
     mode: ParseMode,
     file: Option<PathBuf>,
 ) -> Result<GameTree> {
-    let tokens = tokenize(input);
+    let tokens = tokenize_with_mode(input, mode);
     build_tree_with_options(&tokens, mode, file, Some(input))
 }
 
@@ -547,5 +547,105 @@ Prose about Nf3.
         let pgn = "1. e4 e5 2. Nf3 *";
         let result = parse(pgn);
         assert!(result.is_ok());
+    }
+
+    // ========================================================================
+    // Strict vs Lenient Mode Tests
+    // ========================================================================
+
+    #[test]
+    fn test_strict_mode_errors_on_unmatched_closing_paren() {
+        // Extra closing paren should error in strict mode
+        let pgn = "1. e4 e5) 2. Nf3 *";
+        let result = parse_with_options(pgn, ParseMode::Strict, None);
+        assert!(result.is_err(), "Strict mode should error on unmatched )");
+        let err = result.unwrap_err();
+        let err_str = err.to_string();
+        assert!(err_str.contains("E003"), "Should have error code E003");
+    }
+
+    #[test]
+    fn test_lenient_mode_ignores_unmatched_closing_paren() {
+        // Extra closing paren should be silently ignored in lenient mode
+        let pgn = "1. e4 e5) 2. Nf3 *";
+        let result = parse_with_options(pgn, ParseMode::Lenient, None);
+        assert!(result.is_ok(), "Lenient mode should ignore unmatched )");
+        let tree = result.unwrap();
+        assert_eq!(tree.count_nodes(), 3);
+    }
+
+    #[test]
+    fn test_strict_mode_parses_embedded_variation_literally() {
+        // In strict mode, parenthetical references are parsed as real variations
+        let pgn = r#"1. e4 e5
+This avoids the Petrosian Variation (7.d5) which is problematic.
+2. Nf3 *"#;
+        let result = parse_with_options(pgn, ParseMode::Strict, None);
+        assert!(result.is_ok());
+        let tree = result.unwrap();
+        // Strict mode parses (7.d5) as a real variation, so we get more nodes
+        // e4, e5, Nf3 (main) + d5 (from variation) = 4
+        assert!(
+            tree.count_nodes() > 3,
+            "Strict mode should parse (7.d5) as a real variation"
+        );
+    }
+
+    #[test]
+    fn test_lenient_mode_collapses_embedded_variation() {
+        // In lenient mode, short parenthetical references are collapsed to text
+        let pgn = r#"1. e4 e5
+This avoids the Petrosian Variation (7.d5) which is problematic.
+2. Nf3 *"#;
+        let result = parse_with_options(pgn, ParseMode::Lenient, None);
+        assert!(result.is_ok());
+        let tree = result.unwrap();
+        // Lenient mode collapses (7.d5) into the comment text
+        assert_eq!(
+            tree.count_nodes(),
+            3,
+            "Lenient mode should collapse (7.d5) to text"
+        );
+    }
+
+    #[test]
+    fn test_strict_mode_multiple_unmatched_parens() {
+        // Multiple unmatched parens should error on the first one in strict mode
+        let pgn = "1. e4)) e5 *";
+        let result = parse_with_options(pgn, ParseMode::Strict, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_lenient_mode_multiple_unmatched_parens() {
+        // Multiple unmatched parens should all be ignored in lenient mode
+        let pgn = "1. e4)) e5))) 2. Nf3 *";
+        let result = parse_with_options(pgn, ParseMode::Lenient, None);
+        assert!(result.is_ok());
+        let tree = result.unwrap();
+        assert_eq!(tree.count_nodes(), 3);
+    }
+
+    #[test]
+    fn test_strict_mode_valid_variation_works() {
+        // Properly balanced variations should work in strict mode
+        let pgn = "1. e4 e5 (1... c5 2. Nf3) 2. Bc4 *";
+        let result = parse_with_options(pgn, ParseMode::Strict, None);
+        assert!(result.is_ok());
+        let tree = result.unwrap();
+        // e4, e5, Bc4 (main) + c5, Nf3 (variation) = 5
+        assert_eq!(tree.count_nodes(), 5);
+    }
+
+    #[test]
+    fn test_both_modes_error_on_unclosed_variation() {
+        // Unclosed variations should error in both modes
+        let pgn = "1. e4 (1... c5 *";
+
+        let strict_result = parse_with_options(pgn, ParseMode::Strict, None);
+        assert!(strict_result.is_err(), "Strict mode should error on unclosed variation");
+
+        let lenient_result = parse_with_options(pgn, ParseMode::Lenient, None);
+        assert!(lenient_result.is_err(), "Lenient mode should also error on unclosed variation");
     }
 }
