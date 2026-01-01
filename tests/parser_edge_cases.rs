@@ -1746,3 +1746,306 @@ fn test_parse_stockfish_analysis() {
     let e4 = tree.root.find_child("e4").unwrap();
     assert!(e4.comment.contains("%eval"));
 }
+
+// ============================================================================
+// LIST MARKER BUG TESTS
+// ============================================================================
+// These tests verify that list markers like "1)" and "2)" in bare text
+// comments do NOT prematurely close variations. This is a HIGH severity
+// bug that causes silent data loss when parsing PGN files.
+//
+// Bug: When a line contains prose like "ideas: 1) control d4 2) attack",
+// the "1)" gets split into MoveNumber("1") and VariationEnd(")").
+// The VariationEnd incorrectly closes the variation prematurely.
+
+const LIST_MARKER_IN_VARIATION: &str = r#"1. e4 e5
+(1... c5
+The Sicilian has two ideas: 1) control d4 2) queenside play
+2. Nf3 d6 3. d4 cxd4)
+2. Nf3 *"#;
+
+#[test]
+fn test_list_marker_in_variation_comment() {
+    // Core bug: 1) and 2) in prose inside a variation should NOT close it
+    let tree = parse_pgn(LIST_MARKER_IN_VARIATION);
+
+    // e4 should have two children: e5 (main) and c5 (variation with full continuation)
+    // The comment with list markers is preserved on c5 - the full text including "1)" and "2)"
+    // should be treated as comment text, not as move numbers + variation-ending parentheses.
+    let expected = game_tree! {
+        e4 {
+            e5 { Nf3 },
+            c5 (comment: "The Sicilian has two ideas: 1) control d4 2) queenside play") {
+                Nf3 {
+                    d6 {
+                        d4 { cxd4 }
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
+}
+
+const MULTIPLE_LIST_MARKERS: &str = r#"1. e4 e5
+(1... c5
+Three options: 1) Nf3 2) Nc3 3) d4 - all good
+2. Nf3 d6)
+2. Nf3 *"#;
+
+#[test]
+fn test_multiple_list_markers_in_variation() {
+    // Multiple list markers: 1) 2) 3) etc should all be treated as text
+    let tree = parse_pgn(MULTIPLE_LIST_MARKERS);
+
+    // Variation should have full continuation despite multiple list markers
+    // The comment should preserve the full text with all list markers intact
+    let expected = game_tree! {
+        e4 {
+            e5 { Nf3 },
+            c5 (comment: "Three options: 1) Nf3 2) Nc3 3) d4 - all good") { Nf3 { d6 } }
+        }
+    };
+    assert_contains_tree!(tree, expected);
+}
+
+const LIST_MARKER_MAIN_LINE: &str = r#"1. e4
+Two options: 1) push d4 2) develop knights
+e5 *"#;
+
+#[test]
+fn test_list_marker_in_main_line_comment() {
+    // List markers in main line prose should not cause issues
+    let tree = parse_pgn(LIST_MARKER_MAIN_LINE);
+
+    // The comment with list markers should be preserved on e4
+    let expected = game_tree! {
+        e4 (comment: "Two options: 1) push d4 2) develop knights") { e5 }
+    };
+    assert_contains_tree!(tree, expected);
+}
+
+const LIST_MARKER_BETWEEN_MOVES: &str = r#"1. e4 e5
+White has choices: 1) Nf3 2) Bc4 3) Nc3
+2. Nf3 Nc6 *"#;
+
+#[test]
+fn test_list_marker_between_moves() {
+    // List markers in prose between moves on main line
+    let tree = parse_pgn(LIST_MARKER_BETWEEN_MOVES);
+
+    // Comment with list markers should be attached to e5
+    let expected = game_tree! {
+        e4 { e5 (comment: "White has choices: 1) Nf3 2) Bc4 3) Nc3") { Nf3 { Nc6 } } }
+    };
+    assert_contains_tree!(tree, expected);
+    assert_eq!(count_nodes(&tree), 4, "Should have 4 moves: e4, e5, Nf3, Nc6");
+}
+
+const LIST_MARKER_NESTED: &str = r#"1. e4 e5
+(1... c5 2. Nf3
+Opening ideas: 1) attack center 2) develop pieces
+d6 3. d4 cxd4)
+2. Nf3 *"#;
+
+#[test]
+fn test_list_marker_in_nested_variation() {
+    // List markers in prose within a variation shouldn't break continuation
+    let tree = parse_pgn(LIST_MARKER_NESTED);
+
+    // The c5 variation should have full continuation despite list markers in prose
+    // Comment with list markers should be attached to Nf3 (the move before the prose)
+    let expected = game_tree! {
+        e4 {
+            e5 { Nf3 },
+            c5 {
+                Nf3 (comment: "Opening ideas: 1) attack center 2) develop pieces") {
+                    d6 {
+                        d4 { cxd4 }
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
+}
+
+#[test]
+fn test_closing_paren_at_end_of_move_line_still_works() {
+    // Real variation closing at end of move line should still work
+    let pgn = "1. e4 e5 (1... c5 2. Nf3) 2. Bc4 *";
+    let tree = parse_pgn(pgn);
+
+    let expected = game_tree! {
+        e4 {
+            e5 { Bc4 },
+            c5 { Nf3 }
+        }
+    };
+    assert_contains_tree!(tree, expected);
+}
+
+#[test]
+fn test_paren_in_brace_comment_works() {
+    // Parentheses in brace comments already work - verify no regression
+    let pgn = "1. e4 {Options: 1) d4 2) Nf3} e5 *";
+    let tree = parse_pgn(pgn);
+    assert_eq!(count_nodes(&tree), 2);
+
+    let expected = game_tree! {
+        e4 (comment: "Options: 1) d4 2) Nf3") { e5 }
+    };
+    assert_contains_tree!(tree, expected);
+}
+
+const EMPTY_PARENS_IN_PROSE: &str = r#"1. e4
+Empty parens () here
+e5 *"#;
+
+#[test]
+fn test_empty_parens_in_prose() {
+    // Edge case: empty parens in prose
+    let tree = parse_pgn(EMPTY_PARENS_IN_PROSE);
+
+    // Empty parens should be preserved in comment
+    let expected = game_tree! {
+        e4 (comment: "Empty parens () here") { e5 }
+    };
+    assert_contains_tree!(tree, expected);
+    assert_eq!(count_nodes(&tree), 2, "Empty parens should not break parsing");
+}
+
+const LETTER_PAREN_MARKERS: &str = r#"1. e4 e5
+(1... c5
+Options: a) attack b) defend c) wait
+2. Nf3)
+2. Bc4 *"#;
+
+#[test]
+fn test_letter_paren_like_a_in_prose() {
+    // a) b) c) style lists should also be handled
+    let tree = parse_pgn(LETTER_PAREN_MARKERS);
+
+    // Letter-based list markers like a) b) c) should be preserved in comment
+    let expected = game_tree! {
+        e4 {
+            e5 { Bc4 },
+            c5 (comment: "Options: a) attack b) defend c) wait") { Nf3 }
+        }
+    };
+    assert_contains_tree!(tree, expected);
+}
+
+const PROSE_AFTER_VARIATION: &str = r#"1. e4
+Commentary about the opening.
+(1. d4 d5)
+More commentary: 1) point one 2) point two
+e5 *"#;
+
+#[test]
+fn test_prose_context_restored_after_variation() {
+    // After exiting variation, prose context should work correctly
+    let tree = parse_pgn(PROSE_AFTER_VARIATION);
+
+    // (1. d4 d5) after 1. e4 is a REPLACEMENT variation (alternative first move)
+    // so d4 is at root level (sibling of e4), not a child
+    // Comments are preserved with list markers intact
+    let expected = game_tree! {
+        e4 (comment: "Commentary about the opening. More commentary: 1) point one 2) point two") { e5 },
+        d4 { d5 }
+    };
+    assert_contains_tree!(tree, expected);
+}
+
+const SINGLE_DIGIT_MID_SENTENCE: &str = r#"1. e4 e5
+(1... c5
+The best response is 1) d3 because of pressure.
+2. Nf3)
+2. Bc4 *"#;
+
+#[test]
+fn test_single_digit_paren_mid_sentence() {
+    // Single digit followed by ) mid-sentence should not close variation
+    let tree = parse_pgn(SINGLE_DIGIT_MID_SENTENCE);
+
+    // List marker in mid-sentence should be preserved in comment
+    let expected = game_tree! {
+        e4 {
+            e5 { Bc4 },
+            c5 (comment: "The best response is 1) d3 because of pressure.") { Nf3 }
+        }
+    };
+    assert_contains_tree!(tree, expected);
+}
+
+const TWO_DIGIT_LIST_MARKERS: &str = r#"1. e4 e5
+(1... c5
+Many ideas: 10) push pawns 11) develop pieces 12) castle
+2. Nf3)
+2. Bc4 *"#;
+
+#[test]
+fn test_two_digit_list_marker() {
+    // Two-digit list markers like 10) 11) should also be handled
+    let tree = parse_pgn(TWO_DIGIT_LIST_MARKERS);
+
+    // Two-digit list markers should be preserved in comment
+    let expected = game_tree! {
+        e4 {
+            e5 { Bc4 },
+            c5 (comment: "Many ideas: 10) push pawns 11) develop pieces 12) castle") { Nf3 }
+        }
+    };
+    assert_contains_tree!(tree, expected);
+}
+
+const REAL_WORLD_LIST_MARKER: &str = r#"1. d4 Nf6 2. c4 g6 3. Nc3 Bg7 4. e4 d6 5. Nf3 O-O 6. Be2 Na6
+(7. Nd2
+Of the alternatives to 7.0-0, this knight retreat is the most testing.
+c5
+This move is entirely consistent with our philosophy... two main reasons: 1) Our knight can now find a productive role on c7... 2) White's last move hems in the dark-squared bishop...
+8. d5 e6)
+7. O-O *"#;
+
+#[test]
+fn test_real_world_danyakid_list_marker() {
+    // Real-world example from DanyaKID Classical Main Line
+    let tree = parse_pgn(REAL_WORLD_LIST_MARKER);
+
+    // Expected tree structure with comments containing list markers
+    // The multi-line prose with "1) ... 2) ..." should be preserved as comment on c5
+    // Note: castling notation is normalized (0-0 → O-O) and tokenized separately from move number
+    let expected = game_tree! {
+        d4 {
+            Nf6 {
+                c4 {
+                    g6 {
+                        Nc3 {
+                            Bg7 {
+                                e4 {
+                                    d6 {
+                                        Nf3 {
+                                            "O-O" {
+                                                Be2 {
+                                                    Na6 {
+                                                        "O-O",
+                                                        Nd2 (comment: "Of the alternatives to 7. O-O, this knight retreat is the most testing.") {
+                                                            c5 (comment: "This move is entirely consistent with our philosophy... two main reasons: 1) Our knight can now find a productive role on c7... 2) White's last move hems in the dark-squared bishop...") {
+                                                                d5 { e6 }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
+}

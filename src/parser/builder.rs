@@ -64,6 +64,10 @@ struct BuilderState {
     file: Option<PathBuf>,
     /// Original source text (for error context)
     source: Option<String>,
+    /// Flag to track if we need to check for replacement vs response on first variation move
+    /// When true, the first move in a variation will check if it's replacing the previous move
+    /// (sibling) or responding to it (child)
+    pending_variation_pop: bool,
 }
 
 impl BuilderState {
@@ -80,6 +84,7 @@ impl BuilderState {
             mode,
             file: None,
             source: None,
+            pending_variation_pop: false,
         }
     }
 
@@ -124,14 +129,22 @@ impl BuilderState {
 
     /// Append text to the appropriate comment location (pending or current node)
     fn append_comment(&mut self, root: &mut GameNode, text: &str) {
+        self.append_comment_with_space(root, text, true);
+    }
+
+    fn append_comment_no_space(&mut self, root: &mut GameNode, text: &str) {
+        self.append_comment_with_space(root, text, false);
+    }
+
+    fn append_comment_with_space(&mut self, root: &mut GameNode, text: &str, add_space: bool) {
         if self.current_path.is_empty() {
-            if !self.pending_comment.is_empty() {
+            if !self.pending_comment.is_empty() && add_space {
                 self.pending_comment.push(' ');
             }
             self.pending_comment.push_str(text);
         } else {
             let current = root.navigate_path_mut(&self.current_path);
-            if !current.comment.is_empty() {
+            if !current.comment.is_empty() && add_space {
                 current.comment.push(' ');
             }
             current.comment.push_str(text);
@@ -175,12 +188,42 @@ impl BuilderState {
         }
     }
 
+    /// Handle standalone digit tokens (list markers like "1" in "1)" or "2" in "2)")
+    /// These always represent prose content, not move numbers
+    fn handle_digit(&mut self, root: &mut GameNode, digit_str: &str) {
+        // Standalone digits are always treated as comment text
+        // They appear as list markers in prose (e.g., "reasons: 1) first 2) second")
+        self.append_comment(root, digit_str);
+        // Enter prose context if not already in it
+        if !matches!(self.context, ParseContext::InProse) {
+            self.context = ParseContext::InProse;
+        }
+    }
+
     /// Handle a chess move token (piece move, pawn move, or castling)
     fn handle_move(&mut self, root: &mut GameNode, san: &str) {
         if matches!(self.context, ParseContext::InProse) {
             // In prose context, treat as comment text
             self.append_comment(root, san);
         } else {
+            // Check if this is the first move in a variation
+            // We need to decide if it's a replacement (sibling) or response (child)
+            if self.pending_variation_pop {
+                self.pending_variation_pop = false;
+                // Check if the move color matches what we expected when entering the variation
+                // If it matches, this is a response (child of current position)
+                // If it doesn't match, this is a replacement (sibling of last move)
+                if let Some((_, _, saved_expect_black, _)) = self.return_stack.last() {
+                    if self.expect_black != *saved_expect_black {
+                        // Different color than expected = replacement = pop to make sibling
+                        if !self.current_path.is_empty() {
+                            self.current_path.pop();
+                        }
+                    }
+                    // Same color = response = stay at current position (no pop)
+                }
+            }
+
             // Real move - add to tree
             let mut node = GameNode::new(san);
             node.move_number = Some(self.current_move_number);
@@ -236,6 +279,24 @@ impl BuilderState {
         }
     }
 
+    /// Handle punctuation in prose (commas, dashes, etc.)
+    fn handle_punctuation(&mut self, root: &mut GameNode, punct: &str) {
+        // Punctuation like commas and dashes don't get leading spaces
+        // So "word," stays as "word," not "word ,"
+        // But dashes between words do get spaces: "d4 - all" not "d4- all"
+        if punct == "-" {
+            // Dash between words: add with normal spacing
+            self.append_comment(root, punct);
+        } else {
+            // Comma, semicolon: attach to previous word
+            self.append_comment_no_space(root, punct);
+        }
+        // Punctuation continues prose context
+        if !matches!(self.context, ParseContext::InProse) {
+            self.context = ParseContext::InProse;
+        }
+    }
+
     /// Handle start of a variation
     fn handle_variation_start(&mut self, token: &LocatedToken) {
         // Track where this variation started for error reporting
@@ -252,18 +313,30 @@ impl BuilderState {
             self.context.clone(),
         ));
 
-        if !self.current_path.is_empty() {
-            // Go back to parent - variation moves are siblings of current move
-            self.current_path.pop();
-        }
-        // Root-level variations create alternative first moves
+        // Don't pop immediately - we'll decide when we see the first move.
+        // If the first move is a "response" (same color as expected), it's a child.
+        // If the first move is a "replacement" (different color), pop to make it a sibling.
+        self.pending_variation_pop = true;
 
         // Variations start fresh
         self.context = ParseContext::BetweenMoves;
     }
 
     /// Handle end of a variation
-    fn handle_variation_end(&mut self, token: &LocatedToken) -> std::result::Result<(), ParseError> {
+    fn handle_variation_end(
+        &mut self,
+        root: &mut GameNode,
+        token: &LocatedToken,
+    ) -> std::result::Result<(), ParseError> {
+        // In prose context, treat ) as text, not as variation end
+        // This handles list markers like "1) control d4 2) attack queenside"
+        // where the ) is part of the prose, not a variation closer
+        // Don't add a space before ) so "1)" stays as "1)" not "1 )"
+        if matches!(self.context, ParseContext::InProse) {
+            self.append_comment_no_space(root, ")");
+            return Ok(());
+        }
+
         // Pop variation start tracking
         self.variation_starts.pop();
 
@@ -367,6 +440,11 @@ pub fn build_tree_with_options(
                 state.handle_move_number(&mut tree.root, num_str);
             }
 
+            // Standalone digits (like "1" in "1)") are list markers in prose - always treat as text
+            Token::Digit(digit_str) => {
+                state.handle_digit(&mut tree.root, digit_str);
+            }
+
             Token::PieceMove(san)
             | Token::PawnMove(san)
             | Token::CastleLong(san)
@@ -380,6 +458,11 @@ pub fn build_tree_with_options(
 
             Token::BareText(text) => {
                 state.handle_bare_text(&mut tree.root, text);
+            }
+
+            // Punctuation in prose (commas, semicolons, dashes)
+            Token::Punctuation(punct) => {
+                state.handle_punctuation(&mut tree.root, punct);
             }
 
             Token::Nag(nag_str) => {
@@ -418,7 +501,7 @@ pub fn build_tree_with_options(
             }
 
             Token::VariationEnd => {
-                state.handle_variation_end(token)?;
+                state.handle_variation_end(&mut tree.root, token)?;
             }
 
             Token::WhiteWins => tree.result = GameResult::WhiteWins,
@@ -679,23 +762,69 @@ mod tests {
     }
 
     #[test]
-    fn test_mixed_unbalanced_parens() {
-        // Complex case: balanced variation with extra closing paren after it
-        // 1. e4 e5 (2. Nf3)) 2. Bc4 *
-        // The (2. Nf3) is a variation from e4 (alternative to e5), the extra ) is ignored
+    fn test_variation_after_black_move() {
+        // After Black's move 1 (e5), a variation with move 2 White (Nf3)
+        // is a continuation (alternative at move 2), not a replacement of e5
+        // So Nf3 is a CHILD of e5, sibling of Bc4
         let tokens = tokenize("1. e4 e5 (2. Nf3) 2. Bc4 *");
         let tree = build_tree(&tokens).unwrap();
 
         let e4 = tree.root.find_child("e4").unwrap();
-        // e5 is the main line continuation
         let e5 = e4.find_child("e5").unwrap();
-        // Nf3 is a variation from e4 (sibling of e5)
-        assert!(
-            e4.find_child("Nf3").is_some(),
-            "Nf3 should be a variation from e4"
-        );
-        // Bc4 continues the main line after e5 (extra ) was ignored)
-        assert!(e5.find_child("Bc4").is_some(), "Bc4 should continue after e5");
+        // Both Nf3 and Bc4 are children of e5 (alternatives at move 2)
+        assert!(e5.find_child("Nf3").is_some(), "Nf3 should be a child of e5");
+        assert!(e5.find_child("Bc4").is_some(), "Bc4 should be a child of e5");
+    }
+
+    #[test]
+    fn test_replacement_variation_same_color() {
+        // Variation (1... c5) after e5 replaces e5 (same move number, same color)
+        // So c5 is a SIBLING of e5 under e4
+        let tokens = tokenize("1. e4 e5 (1... c5 2. Nf3) 2. Nf3 *");
+        let tree = build_tree(&tokens).unwrap();
+
+        let e4 = tree.root.find_child("e4").unwrap();
+        // Both e5 and c5 are children of e4 (alternatives at move 1 Black)
+        assert!(e4.find_child("e5").is_some(), "e5 should be under e4");
+        assert!(e4.find_child("c5").is_some(), "c5 should be under e4 (sibling of e5)");
+    }
+
+    #[test]
+    fn test_response_variation_opposite_color() {
+        // After White's Nf3, variation (2... e6) is Black's response
+        // So e6 is a CHILD of Nf3
+        let tokens = tokenize("1. e4 e5 2. Nf3 (2... e6 3. d4) Nc6 *");
+        let tree = build_tree(&tokens).unwrap();
+
+        let nf3 = tree.find_path(&["e4", "e5", "Nf3"]).unwrap();
+        // Both e6 and Nc6 are children of Nf3 (alternatives at move 2 Black)
+        assert!(nf3.find_child("e6").is_some(), "e6 should be a child of Nf3");
+        assert!(nf3.find_child("Nc6").is_some(), "Nc6 should be a child of Nf3");
+    }
+
+    #[test]
+    fn test_nested_response_variation() {
+        // After c5, White plays Nf3, then variation (2... e6) is response to Nf3
+        // e6 should be CHILD of Nf3, not sibling
+        let tokens = tokenize("1. e4 e5 (1... c5 2. Nf3 (2... e6 3. d4) d6) 2. Nf3 *");
+        let tree = build_tree(&tokens).unwrap();
+
+        let c5 = tree.root.find_child("e4").unwrap().find_child("c5").unwrap();
+        let nf3_in_c5 = c5.find_child("Nf3").unwrap();
+        // e6 and d6 are both children of Nf3 inside the c5 variation
+        assert!(nf3_in_c5.find_child("e6").is_some(), "e6 should be child of Nf3 (response)");
+        assert!(nf3_in_c5.find_child("d6").is_some(), "d6 should be child of Nf3 (main line in variation)");
+    }
+
+    #[test]
+    fn test_root_level_replacement_variation() {
+        // Variation at move 1 White is an alternative first move
+        let tokens = tokenize("1. e4 (1. d4 d5) e5 *");
+        let tree = build_tree(&tokens).unwrap();
+
+        // Both e4 and d4 are children of root (alternatives at move 1)
+        assert!(tree.root.find_child("e4").is_some(), "e4 should be at root");
+        assert!(tree.root.find_child("d4").is_some(), "d4 should be at root (sibling of e4)");
     }
 
     #[test]

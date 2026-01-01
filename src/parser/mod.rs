@@ -648,4 +648,5 @@ This avoids the Petrosian Variation (7.d5) which is problematic.
         let lenient_result = parse_with_options(pgn, ParseMode::Lenient, None);
         assert!(lenient_result.is_err(), "Lenient mode should also error on unclosed variation");
     }
+
 }

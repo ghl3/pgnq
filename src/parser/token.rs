@@ -14,6 +14,10 @@ pub enum Token {
     #[regex(r"[0-9]+\.+", |lex| lex.slice().to_string(), priority = 8)]
     MoveNumber(String),
 
+    /// Standalone digits (not followed by dots) - these occur in prose as list markers like "1)" or "2)"
+    #[regex(r"[0-9]+", |lex| lex.slice().to_string(), priority = 3)]
+    Digit(String),
+
     /// Castling moves (must be before Move to have higher priority)
     /// Accepts both O-O-O (standard) and 0-0-0 (common variant with zeros)
     #[regex(r"[O0]-[O0]-[O0][+#]?", |lex| normalize_castling(lex.slice()), priority = 9)]
@@ -116,8 +120,15 @@ pub enum Token {
     /// Bare text that doesn't match other patterns (potential comment in Lichess format)
     /// Note: Does NOT include spaces, !, or ? - each word is a separate token
     /// Excludes ! and ? to avoid consuming NAGs attached to moves
-    #[regex(r"[A-Za-z][A-Za-z0-9,.'\-]*", |lex| lex.slice().to_string(), priority = 2)]
+    /// Includes trailing colons like "ideas:" which are common in prose
+    #[regex(r"[A-Za-z][A-Za-z0-9,.'\-]*:?", |lex| lex.slice().to_string(), priority = 2)]
     BareText(String),
+
+    /// Punctuation that can appear in prose (commas, semicolons, dashes, etc.)
+    /// Not including ! or ? which are NAGs, or () which are variation markers
+    /// Note: dash/hyphen needs special handling as it can be in moves (O-O) or prose
+    #[regex(r"[,;\-]", |lex| lex.slice().to_string(), priority = 1)]
+    Punctuation(String),
 }
 
 impl Token {
