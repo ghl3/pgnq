@@ -1,11 +1,18 @@
 //! PGN parser - tokenization and tree building
+//!
+//! # Pipeline
+//!
+//! ```text
+//! Input → Phase 1 (Lexer) → Phase 2 (Post-process) → Phase 3 (Builder) → GameTree
+//! ```
 
 mod builder;
 mod lexer;
 mod token;
+mod token_postprocess;
 
-pub use builder::{build_tree, build_tree_with_options};
-pub use lexer::{tokenize, tokenize_simple, tokenize_with_mode, LocatedToken};
+pub use builder::build_tree;
+pub use lexer::{tokenize, LocatedToken};
 pub use token::Token;
 
 use crate::error::{ParseMode, Result};
@@ -23,8 +30,14 @@ pub fn parse_with_options(
     mode: ParseMode,
     file: Option<PathBuf>,
 ) -> Result<GameTree> {
-    let tokens = tokenize_with_mode(input, mode);
-    build_tree_with_options(&tokens, mode, file, Some(input))
+    // Phase 1: Tokenize
+    let tokens = lexer::tokenize(input);
+
+    // Phase 2: Post-process tokens
+    let tokens = token_postprocess::process(tokens, mode);
+
+    // Phase 3: Build tree
+    builder::build_tree_with_options(&tokens, mode, file, Some(input))
 }
 
 /// Parse multiple games from a PGN string

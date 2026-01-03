@@ -1,7 +1,9 @@
-//! Lexer for PGN files - converts input text to token stream
+//! Phase 1: Lexer
+//!
+//! Converts input text to a stream of located tokens.
+//! This phase is mode-agnostic; all heuristics are applied in Phase 2.
 
 use super::token::Token;
-use crate::error::ParseMode;
 use logos::Logos;
 
 /// A token with its location information
@@ -60,39 +62,22 @@ fn offset_to_line_col(source: &str, offset: usize) -> (usize, usize) {
     (line, col)
 }
 
-/// Tokenize a PGN string into a vector of located tokens (lenient mode)
+/// Tokenize a PGN string into located tokens.
 ///
-/// This is a liberal tokenizer that handles multiple PGN formats:
-/// - Standard PGN with {} comments
-/// - Lichess format with bare text comments
-/// - Mixed formats
+/// This is pure tokenization with no heuristics applied.
+/// Post-processing (if any) happens in Phase 2.
 pub fn tokenize(input: &str) -> Vec<LocatedToken> {
-    tokenize_with_mode(input, ParseMode::Lenient)
-}
-
-/// Tokenize a PGN string with a specific parse mode
-///
-/// In lenient mode, applies heuristics to handle ambiguous patterns:
-/// - Collapses embedded variations that are actually parenthetical references
-/// - Handles move-like tokens in prose context
-///
-/// In strict mode, skips heuristics and returns tokens as-is,
-/// allowing the builder to detect and error on ambiguous patterns.
-pub fn tokenize_with_mode(input: &str, mode: ParseMode) -> Vec<LocatedToken> {
     let mut tokens: Vec<LocatedToken> = Vec::new();
     let lexer = Token::lexer(input);
 
     for (token_result, span) in lexer.spanned() {
         if let Ok(tok) = token_result {
-            // Filter out bare text that looks like it's part of a move sequence
-            // (this helps with the Lichess format detection)
+            // Filter out bare text that is empty or looks like a partial move number
             if let Token::BareText(ref text) = tok {
                 let trimmed = text.trim();
-                // Skip if it's empty or looks like a result
                 if trimmed.is_empty() {
                     continue;
                 }
-                // Skip if it looks like a partial move number
                 if trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') {
                     continue;
                 }
@@ -108,130 +93,7 @@ pub fn tokenize_with_mode(input: &str, mode: ParseMode) -> Vec<LocatedToken> {
         }
     }
 
-    // Apply heuristics only in lenient mode
-    if mode == ParseMode::Lenient {
-        post_process_tokens(&mut tokens);
-    }
-
     tokens
-}
-
-/// Tokenize without location info (for backward compatibility)
-pub fn tokenize_simple(input: &str) -> Vec<Token> {
-    tokenize(input).into_iter().map(|lt| lt.token).collect()
-}
-
-/// Detect and collapse variations that are actually parenthetical references in text.
-/// Pattern: BareText ... ( MoveNumber? Move ) ... BareText
-/// These are NOT real variations - they're references like "the Petrosian (7.d5)"
-fn collapse_embedded_variations(tokens: &mut Vec<LocatedToken>) {
-    let mut i = 0;
-    while i < tokens.len() {
-        // Look for BareText followed eventually by VariationStart
-        if !matches!(tokens[i].token, Token::BareText(_)) {
-            i += 1;
-            continue;
-        }
-
-        // Find VariationStart after this BareText
-        let var_start = (i + 1..tokens.len())
-            .find(|&j| matches!(tokens[j].token, Token::VariationStart));
-
-        let Some(var_start_idx) = var_start else {
-            i += 1;
-            continue;
-        };
-
-        // Check all tokens between i and var_start are BareText or Newline
-        let all_baretext = (i + 1..var_start_idx)
-            .all(|j| matches!(tokens[j].token, Token::BareText(_) | Token::Newline));
-        if !all_baretext {
-            i += 1;
-            continue;
-        }
-
-        // Find matching VariationEnd (handle nesting)
-        let mut depth = 0;
-        let mut var_end_idx = None;
-        for j in var_start_idx..tokens.len() {
-            match &tokens[j].token {
-                Token::VariationStart => depth += 1,
-                Token::VariationEnd => {
-                    depth -= 1;
-                    if depth == 0 {
-                        var_end_idx = Some(j);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let Some(var_end_idx) = var_end_idx else {
-            i += 1;
-            continue;
-        };
-
-        // Count move tokens inside the variation
-        let move_count = (var_start_idx + 1..var_end_idx)
-            .filter(|&j| tokens[j].token.is_move())
-            .count();
-
-        // If only 1-2 moves AND followed by BareText, it's likely a parenthetical reference
-        if move_count > 2 {
-            i += 1;
-            continue; // Real variation with multiple moves
-        }
-
-        // Check if followed by BareText (not end of input, not another move)
-        let followed_by_baretext =
-            var_end_idx + 1 < tokens.len() && matches!(tokens[var_end_idx + 1].token, Token::BareText(_));
-
-        if followed_by_baretext {
-            // This is a parenthetical reference - collapse the variation into BareText
-            let var_text = tokens[var_start_idx..=var_end_idx]
-                .iter()
-                .map(|lt| match &lt.token {
-                    Token::VariationStart => "(".to_string(),
-                    Token::VariationEnd => ")".to_string(),
-                    Token::MoveNumber(s) => s.clone(),
-                    Token::PawnMove(s) | Token::PieceMove(s) => s.clone(),
-                    Token::CastleShort(s) | Token::CastleLong(s) => s.clone(),
-                    Token::BareText(s) => s.clone(),
-                    _ => String::new(),
-                })
-                .collect::<Vec<_>>()
-                .join("");
-
-            // Get location from the start of the variation
-            let loc = &tokens[var_start_idx];
-            let new_token = LocatedToken::new(
-                Token::BareText(var_text),
-                loc.line,
-                loc.column,
-                loc.offset,
-                tokens[var_end_idx].offset + tokens[var_end_idx].len - loc.offset,
-            );
-
-            // Replace variation tokens with single BareText
-            tokens.splice(var_start_idx..=var_end_idx, std::iter::once(new_token));
-            // Don't increment i - check again from same position
-            continue;
-        }
-
-        i += 1;
-    }
-}
-
-/// Post-process tokens to handle Lichess-style bare text comments
-fn post_process_tokens(tokens: &mut Vec<LocatedToken>) {
-    // Collapse embedded variations (parenthetical references in text)
-    // These are patterns like "the Petrosian Variation (7.d5)" where (7.d5)
-    // is NOT a real variation but a textual reference
-    collapse_embedded_variations(tokens);
-
-    // Note: Prose detection (distinguishing move references from real moves)
-    // is now handled by the builder's state machine, not here in the lexer.
 }
 
 #[cfg(test)]

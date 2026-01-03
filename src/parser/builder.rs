@@ -1,4 +1,7 @@
-//! Tree builder - constructs GameTree from token stream
+//! Phase 3: Tree Builder
+//!
+//! Constructs a GameTree from a processed token stream.
+//! Uses a state machine to handle prose detection and variation nesting.
 
 use super::lexer::LocatedToken;
 use super::token::Token;

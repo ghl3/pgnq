@@ -4,24 +4,50 @@ This document describes how the PGN parser works internally. For information abo
 
 ## Overview
 
-The parser uses a three-stage pipeline:
+The parser uses a three-phase pipeline:
 
 ```
-Input String → Lexer → Builder → GameTree
-               │         │          │
-               │         │          └── Final tree structure
-               │         └── State machine + tree construction
-               └── Tokenization with location tracking
+Input String
+     │
+     ▼
+┌─────────────────────────────────────┐
+│ Phase 1: Lexer (lexer.rs)           │
+│ - Regex-based tokenization (logos)  │
+│ - Location tracking (line, column)  │
+│ - Mode-agnostic                     │
+└─────────────────────────────────────┘
+     │ Vec<LocatedToken>
+     ▼
+┌─────────────────────────────────────┐
+│ Phase 2: Token Post-Processing      │
+│ (token_postprocess.rs)              │
+│ - Lenient mode only                 │
+│ - collapse_prose: merges            │
+│   parenthetical refs into BareText  │
+└─────────────────────────────────────┘
+     │ Vec<LocatedToken>
+     ▼
+┌─────────────────────────────────────┐
+│ Phase 3: Builder (builder.rs)       │
+│ - State machine (ParseContext)      │
+│ - Tree construction                 │
+│ - Prose detection                   │
+│ - Variation handling                │
+└─────────────────────────────────────┘
+     │
+     ▼
+  GameTree
 ```
 
 **Key source files:**
 
 - `token.rs` - Token type definitions using the `logos` crate
-- `lexer.rs` - Tokenization and post-processing heuristics
-- `builder.rs` - State machine and tree construction
-- `mod.rs` - Public API entry points
+- `lexer.rs` - Phase 1: Pure tokenization with location tracking
+- `token_postprocess.rs` - Phase 2: Token stream transformations
+- `builder.rs` - Phase 3: State machine and tree construction
+- `mod.rs` - Pipeline orchestration, public API
 
-## Stage 1: Lexer
+## Phase 1: Lexer
 
 ### Token Types (`token.rs`)
 
@@ -72,21 +98,19 @@ pub struct LocatedToken {
 
 This enables precise error messages pointing to exact positions in the source.
 
-### Post-Processing (Lenient Mode Only)
+## Phase 2: Token Post-Processing
 
-After tokenization, the lexer can optionally transform the token stream to handle ambiguous patterns found in real-world PGN files. This post-processing is **only applied in lenient mode** (the default); in strict mode, tokens are returned exactly as the regex-based lexer produced them.
+After tokenization, the token stream can optionally be transformed to handle ambiguous patterns found in real-world PGN files. This post-processing is **only applied in lenient mode** (the default); in strict mode, tokens are passed through unchanged.
 
-#### Merging Parenthetical Move References into Prose
+### `collapse_prose` (`token_postprocess.rs`)
 
-**Function:** `collapse_embedded_variations()` in `lexer.rs:127-224`
-
-The lexer scans for variation tokens (`VariationStart` ... `VariationEnd`) that appear to be parenthetical move references embedded within prose. When detected, it merges these tokens back into a single `BareText` token, preserving them as comment text rather than game tree structure.
+This function scans for variation tokens (`VariationStart` ... `VariationEnd`) that appear to be parenthetical move references embedded within prose. When detected, it merges these tokens back into a single `BareText` token, preserving them as comment text rather than game tree structure.
 
 **How it identifies parenthetical references:**
 
 The key insight is that parenthetical move references are _surrounded by prose_. A real variation like `1. e4 e5 (1... c5) 2. Nf3` appears in structured movetext, while a reference like `"the Italian (3.Bc4) is solid"` appears mid-sentence.
 
-The lexer checks four conditions:
+The function checks four conditions:
 
 1. **Preceded by prose** — A `BareText` token exists before the `(`, indicating we're in narrative text rather than structured movetext.
 
@@ -143,7 +167,7 @@ PawnMove("e4") appears between BareText("after") and VariationStart.
 
 **Note:** This post-processing only handles parenthetical references. Distinguishing move-like tokens _within_ prose (e.g., `"the pawn on f3 is weak"`) is handled later by the builder's state machine.
 
-## Stage 2: Builder
+## Phase 3: Builder
 
 ### State Machine (`builder.rs`)
 
@@ -244,7 +268,7 @@ Each token type has a handler method in `BuilderState`:
 | `VariationEnd`   | `handle_variation_end`   | Pop state; error if unmatched (strict) or ignore (lenient)    |
 | `Newline`        | `handle_newline`         | Exit `InProse` context                                        |
 
-## Stage 3: Data Structures
+## Data Structures
 
 ### GameTree (`tree/game.rs`)
 
