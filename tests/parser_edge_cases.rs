@@ -2240,3 +2240,159 @@ fn test_inline_variation_with_checkmate_and_nag() {
     let tree = result.unwrap();
     assert_eq!(count_nodes(&tree), 4);
 }
+
+// ============================================================================
+// LICHESS BARE TEXT FORMAT TESTS
+// ============================================================================
+//
+// Lichess exports use "bare text" comments - prose that appears on lines after
+// moves without brace delimiters. This requires distinguishing between:
+// - Real moves: Should be added to the game tree
+// - Move-like text: References to moves within prose
+// - Structural delimiters: ( and ) that start/end variations
+// - Prose delimiters: ( and ) that are part of text (e.g., "1)" list markers)
+// ============================================================================
+
+#[test]
+fn test_lichess_bare_text_basic() {
+    // Basic bare text comment on its own line
+    let pgn = r#"1. e4 e5
+This is a comment about the position.
+2. Nf3 *"#;
+    let tree = parse_pgn(pgn);
+
+    let expected = game_tree! {
+        e4 { e5 (comment: "This is a comment about the position.") { Nf3 } }
+    };
+    assert_contains_tree!(tree, expected);
+}
+
+#[test]
+fn test_lichess_bare_text_multiline() {
+    // Multiple lines of bare text comment
+    let pgn = r#"1. e4 e5
+This is the first line.
+This is the second line.
+2. Nf3 *"#;
+    let tree = parse_pgn(pgn);
+
+    // Should have 3 nodes (e4, e5, Nf3)
+    assert_eq!(count_nodes(&tree), 3);
+    let e5 = tree.root.find_child("e4").unwrap().find_child("e5").unwrap();
+    assert!(e5.comment.contains("first line"));
+    assert!(e5.comment.contains("second line"));
+}
+
+#[test]
+fn test_lichess_bare_text_with_move_references() {
+    // Prose that mentions moves should not parse them as actual moves
+    let pgn = r#"1. e4 e5
+After e4-e5, the center is open. You could also play c5 or d5.
+2. Nf3 *"#;
+    let tree = parse_pgn(pgn);
+
+    // Should only have 3 moves, not 6
+    assert_eq!(count_nodes(&tree), 3);
+
+    // The prose should be in the comment
+    let e5 = tree.root.find_child("e4").unwrap().find_child("e5").unwrap();
+    assert!(e5.comment.contains("center is open"));
+}
+
+#[test]
+fn test_lichess_bare_text_variation_preserved() {
+    // Variation with bare text inside should preserve structure
+    let pgn = r#"1. e4 e5 2. Nf3
+(2. Bc4
+This is a comment inside the variation.
+d6
+3. d4)
+Nc6 *"#;
+    let tree = parse_pgn(pgn);
+
+    // Should have main line e4→e5→Nf3→Nc6 and variation Bc4→d6→d4
+    let expected = game_tree! {
+        e4 {
+            e5 {
+                Nf3 { Nc6 },
+                Bc4 (comment: "This is a comment inside the variation.") { d6 { d4 } }
+            }
+        }
+    };
+    assert_contains_tree!(tree, expected);
+}
+
+#[test]
+fn test_variation_closing_on_own_line() {
+    // The ) for closing a variation should work when on its own line
+    let pgn = r#"1. e4 e5
+(1... c5
+This is a comment.
+2. Nf3
+)
+2. Nf3 *"#;
+    let tree = parse_pgn(pgn);
+
+    // Should have main line e4→e5→Nf3 and variation c5→Nf3
+    let e4 = tree.root.find_child("e4").unwrap();
+    assert!(e4.find_child("e5").is_some());
+    assert!(e4.find_child("c5").is_some());
+
+    let c5 = e4.find_child("c5").unwrap();
+    assert!(c5.find_child("Nf3").is_some(), "Nf3 should be inside the variation");
+}
+
+#[test]
+fn test_textual_variation_references_collapsed() {
+    // Parenthetical references like "(7.d5)" should be collapsed to text
+    let pgn = r#"1. e4
+The Petrosian Variation (7.d5) is one option.
+e5 *"#;
+    let tree = parse_pgn(pgn);
+
+    // Should only have e4 and e5, not d5 as a variation
+    assert_eq!(count_nodes(&tree), 2);
+
+    // The comment should contain the reference
+    let e4 = tree.root.find_child("e4").unwrap();
+    assert!(e4.comment.contains("Petrosian") || e4.comment.contains("7.d5"));
+}
+
+#[test]
+fn test_prose_parens_collapsed() {
+    // Parenthetical asides in prose should not become variations
+    let pgn = r#"1. e4
+This move (as mentioned earlier) is important.
+e5 *"#;
+    let tree = parse_pgn(pgn);
+
+    // Should only have e4 and e5
+    assert_eq!(count_nodes(&tree), 2);
+}
+
+#[test]
+fn test_inline_variation_without_prose() {
+    // Inline variation (no bare text) should work normally
+    let pgn = "1. e4 (1. d4 d5 2. c4) e5 *";
+    let tree = parse_pgn(pgn);
+
+    // Main line and variation should both be present
+    let expected = game_tree! {
+        e4 { e5 },
+        d4 { d5 { c4 } }
+    };
+    assert_contains_tree!(tree, expected);
+}
+
+#[test]
+fn test_variation_ends_after_move_not_prose() {
+    // ) at end of line after a move should close variation
+    let pgn = "1. e4 (1. d4 d5) e5 *";
+    let tree = parse_pgn(pgn);
+
+    let expected = game_tree! {
+        e4 { e5 },
+        d4 { d5 }
+    };
+    assert_contains_tree!(tree, expected);
+}
