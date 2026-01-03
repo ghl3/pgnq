@@ -120,14 +120,16 @@ pub enum Token {
     /// Bare text that doesn't match other patterns (potential comment in Lichess format)
     /// Note: Does NOT include spaces, !, or ? - each word is a separate token
     /// Excludes ! and ? to avoid consuming NAGs attached to moves
+    /// Excludes - to avoid consuming move+NAG patterns like "Qxb2-+" as BareText
+    /// Hyphenated words like "en-passant" become separate tokens, which is fine
     /// Includes trailing colons like "ideas:" which are common in prose
-    #[regex(r"[A-Za-z][A-Za-z0-9,.'\-]*:?", |lex| lex.slice().to_string(), priority = 2)]
+    #[regex(r"[A-Za-z][A-Za-z0-9,.']*:?", |lex| lex.slice().to_string(), priority = 2)]
     BareText(String),
 
-    /// Punctuation that can appear in prose (commas, semicolons, dashes, etc.)
+    /// Punctuation that can appear in prose (commas, semicolons, dashes, plus signs, etc.)
     /// Not including ! or ? which are NAGs, or () which are variation markers
-    /// Note: dash/hyphen needs special handling as it can be in moves (O-O) or prose
-    #[regex(r"[,;\-]", |lex| lex.slice().to_string(), priority = 1)]
+    /// Note: dash/hyphen and plus signs need special handling as they can be in NAGs or prose
+    #[regex(r"[,;\-+]", |lex| lex.slice().to_string(), priority = 1)]
     Punctuation(String),
 }
 
@@ -315,5 +317,34 @@ mod tests {
         assert_eq!(normalize_castling("O-O-O"), "O-O-O");
         assert_eq!(normalize_castling("0-0+"), "O-O+");
         assert_eq!(normalize_castling("0-0-0#"), "O-O-O#");
+    }
+
+    #[test]
+    fn test_positional_nag_tokenization() {
+        // Test various positional NAG scenarios
+        // Note: The issue is that move regexes consume trailing + as check notation
+
+        // Case 1: +- after move with check indicator already consumed
+        let tokens = tokenize("Qxb2+-");
+        println!("Qxb2+-: {:?}", tokens);
+        // Qxb2+ is PieceMove (+ is check), - is Punctuation
+        // This is NOT ideal, but documenting current behavior
+
+        // Case 2: -+ after move (no + consumed by move)
+        let tokens = tokenize("Qxb2-+");
+        println!("Qxb2-+: {:?}", tokens);
+
+        // Case 3: -+ after move followed by close paren
+        let tokens = tokenize("Qxb2-+)");
+        println!("Qxb2-+): {:?}", tokens);
+
+        // Case 4: Standalone NAGs
+        let tokens = tokenize("+-");
+        println!("+-: {:?}", tokens);
+        assert!(tokens.iter().any(|t| matches!(t, Token::WhiteWinning)));
+
+        let tokens = tokenize("-+");
+        println!("-+: {:?}", tokens);
+        assert!(tokens.iter().any(|t| matches!(t, Token::BlackWinning)));
     }
 }

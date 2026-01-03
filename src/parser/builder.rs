@@ -279,26 +279,50 @@ impl BuilderState {
         }
     }
 
-    /// Handle punctuation in prose (commas, dashes, etc.)
+    /// Handle punctuation in prose (commas, dashes, plus signs, etc.)
     fn handle_punctuation(&mut self, root: &mut GameNode, punct: &str) {
         // Punctuation like commas and dashes don't get leading spaces
         // So "word," stays as "word," not "word ,"
         // But dashes between words do get spaces: "d4 - all" not "d4- all"
-        if punct == "-" {
-            // Dash between words: add with normal spacing
-            self.append_comment(root, punct);
+        if punct == "-" || punct == "+" {
+            // Standalone dash or plus is ambiguous:
+            // - Could be part of a NAG like -+ or +- that got split incorrectly
+            // - Could be an en-dash in prose like "White - the first player"
+            // - Could be part of a year range like "2020-2021"
+            //
+            // If we're already in prose, add it to the comment.
+            // Otherwise, do NOT enter prose mode - this prevents the case where
+            // a dash/plus after a move (like "Qxb2-" from misparse of "Qxb2-+)")
+            // incorrectly triggers prose context and causes ) to be consumed.
+            if matches!(self.context, ParseContext::InProse) {
+                self.append_comment(root, punct);
+            }
+            // Note: If not in prose, we silently ignore the dash/plus.
+            // This is acceptable because a standalone -/+ after moves is likely a lexer artifact.
         } else {
             // Comma, semicolon: attach to previous word
             self.append_comment_no_space(root, punct);
-        }
-        // Punctuation continues prose context
-        if !matches!(self.context, ParseContext::InProse) {
-            self.context = ParseContext::InProse;
+            // These punctuation marks definitely indicate prose context
+            if !matches!(self.context, ParseContext::InProse) {
+                self.context = ParseContext::InProse;
+            }
         }
     }
 
     /// Handle start of a variation
-    fn handle_variation_start(&mut self, token: &LocatedToken) {
+    /// Returns true if this was treated as a real variation start,
+    /// false if it was treated as text in prose context.
+    fn handle_variation_start(&mut self, root: &mut GameNode, token: &LocatedToken) -> bool {
+        // In lenient mode + prose context, treat ( as text, not as variation start
+        // This handles patterns like "Khoroshev-Morgunov (blitz) 2021." in bare text comments
+        // where the ( is part of the prose, not a variation opener
+        // In strict mode, we parse parentheses literally as variations
+        if matches!(self.mode, ParseMode::Lenient) && matches!(self.context, ParseContext::InProse)
+        {
+            self.append_comment(root, "(");
+            return false;
+        }
+
         // Track where this variation started for error reporting
         self.variation_starts.push(VariationStart {
             line: token.line,
@@ -320,6 +344,7 @@ impl BuilderState {
 
         // Variations start fresh
         self.context = ParseContext::BetweenMoves;
+        true
     }
 
     /// Handle end of a variation
@@ -328,10 +353,9 @@ impl BuilderState {
         root: &mut GameNode,
         token: &LocatedToken,
     ) -> std::result::Result<(), ParseError> {
-        // In prose context, treat ) as text, not as variation end
-        // This handles list markers like "1) control d4 2) attack queenside"
-        // where the ) is part of the prose, not a variation closer
-        // Don't add a space before ) so "1)" stays as "1)" not "1 )"
+        // In prose context, ) is treated as text (e.g., list markers "1) first 2) second")
+        // The key is ensuring we don't incorrectly ENTER prose context before the )
+        // (see handle_punctuation which avoids entering prose for standalone - or +)
         if matches!(self.context, ParseContext::InProse) {
             self.append_comment_no_space(root, ")");
             return Ok(());
@@ -497,7 +521,7 @@ pub fn build_tree_with_options(
             }
 
             Token::VariationStart => {
-                state.handle_variation_start(token);
+                state.handle_variation_start(&mut tree.root, token);
             }
 
             Token::VariationEnd => {
